@@ -313,7 +313,7 @@ class UserIntentAnalyzer:
         pca = PCA(n_components=2)
         pca_result = pca.fit_transform(self.scaled_features)
         
-        # 金融行业专业配色
+        # Professional financial industry color scheme
         colors = ['#2c5282', '#d4af37']
         for cluster_id in self.features_df['cluster'].unique():
             mask = self.features_df['cluster'] == cluster_id
