@@ -290,7 +290,7 @@ class UserIntentAnalyzer:
             'event_density': 'Event Density (events/min)'
         }
         
-        # 金融行业专业配色
+        # Professional financial industry color scheme
         colors = ['#2c5282', '#d4af37']
         for i, feature in enumerate(comparison_features):
             fig.add_trace(
@@ -417,7 +417,7 @@ class UserIntentAnalyzer:
             for event in user_data['event_name']:
                 if 'show_home' in event.lower():
                     event_type_counts[key]['Homepage'] += 1
-                elif 'voucher' in event.lower() or '券' in str(event):
+                elif 'voucher' in event.lower():
                     event_type_counts[key]['Voucher'] += 1
                 elif 'qr' in event.lower():
                     event_type_counts[key]['QR Code'] += 1
