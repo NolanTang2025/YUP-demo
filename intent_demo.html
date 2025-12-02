@@ -883,13 +883,15 @@
         }
         
         .timeline-item:hover::after {
-            content: '👆';
+            content: '→';
             position: absolute;
             right: 18px;
             top: 50%;
             transform: translateY(-50%);
-            font-size: 20px;
-            opacity: 0.7;
+            font-size: 18px;
+            font-weight: 700;
+            color: #3b82f6;
+            opacity: 0.8;
             animation: pointPulse 1s ease-in-out infinite;
         }
         
@@ -1069,10 +1071,15 @@
         }
 
         .pain-point-alert h4::before {
-            content: '⚠️';
+            content: 'ALERT';
             margin-right: 12px;
-            font-size: 20px;
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            text-transform: uppercase;
         }
         
         .pain-point-alert p {
@@ -1131,10 +1138,15 @@
         }
 
         .solution-card h4::before {
-            content: '💡';
+            content: 'SOLUTION';
             margin-right: 12px;
-            font-size: 20px;
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            text-transform: uppercase;
         }
 
         .solution-list {
@@ -1167,11 +1179,12 @@
             background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
             border-radius: 24px;
             padding: 28px;
-            margin-top: 32px;
+            margin-top: 0;
+            margin-bottom: 32px;
             text-align: center;
             border: 1.5px solid #e2e8f0;
             box-shadow: 
-                0 4px 12px rgba(0, 0, 0, 0.06),
+                0 8px 24px rgba(0, 0, 0, 0.08),
                 inset 0 1px 0 rgba(255, 255, 255, 0.8);
             position: relative;
         }
@@ -1394,6 +1407,26 @@
                 <!-- User buttons will be dynamically generated -->
             </div>
 
+            <!-- Control Panel - Moved up for better visibility and priority -->
+            <div class="control-panel" style="margin-bottom: 32px;">
+                <div class="speed-selector">
+                    <label>Playback Speed:</label>
+                    <div class="speed-buttons">
+                        <button class="speed-btn" onclick="setPlaybackSpeed(0.5)" data-speed="0.5">0.5x</button>
+                        <button class="speed-btn active" onclick="setPlaybackSpeed(1)" data-speed="1">1x</button>
+                        <button class="speed-btn" onclick="setPlaybackSpeed(1.5)" data-speed="1.5">1.5x</button>
+                        <button class="speed-btn" onclick="setPlaybackSpeed(2)" data-speed="2">2x</button>
+                        <button class="speed-btn" onclick="setPlaybackSpeed(3)" data-speed="3">3x</button>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <button class="control-btn" onclick="startDemo()" id="startBtn">Start Demo</button>
+                <button class="control-btn" onclick="pauseDemo()" id="pauseBtn" disabled>Pause</button>
+                <button class="control-btn" onclick="resetDemo()" id="resetBtn">Reset</button>
+            </div>
+
             <div class="intent-metrics" id="intentMetrics">
                 <!-- Metrics will be dynamically loaded -->
             </div>
@@ -1405,7 +1438,7 @@
             <!-- Risk Intent Radar Chart -->
             <div class="section" style="background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%); border-radius: 24px; padding: 32px; margin-bottom: 36px; border: 1.5px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8); position: relative;">
                 <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%); border-radius: 24px 24px 0 0;"></div>
-                <h3 style="color: #0f172a; margin-bottom: 28px; font-size: 20px; font-weight: 700; letter-spacing: -0.4px; display: flex; align-items: center; gap: 10px; margin-top: 4px;"><span style="font-size: 24px;">🎯</span>Risk Intent Radar</h3>
+                <h3 style="color: #0f172a; margin-bottom: 28px; font-size: 20px; font-weight: 700; letter-spacing: -0.4px; margin-top: 4px;">Risk Intent Radar</h3>
                 <div id="riskRadarChart" style="height: 400px;"></div>
                 <div style="margin-top: 28px; padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); border-radius: 20px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -1436,7 +1469,7 @@
             </div>
 
             <div class="journey-timeline">
-                <h3><span style="font-size: 24px; margin-right: 8px;">📊</span>User Journey Timeline</h3>
+                <h3>User Journey Timeline</h3>
                 <div id="journeyTimeline">
                     <!-- Timeline will be dynamically loaded -->
                 </div>
@@ -1448,25 +1481,6 @@
 
             <div class="solution-card" id="solutionCard">
                 <!-- Solutions will be dynamically loaded -->
-            </div>
-
-            <div class="control-panel">
-                <div class="speed-selector">
-                    <label>⚡ Playback Speed:</label>
-                    <div class="speed-buttons">
-                        <button class="speed-btn" onclick="setPlaybackSpeed(0.5)" data-speed="0.5">0.5x</button>
-                        <button class="speed-btn active" onclick="setPlaybackSpeed(1)" data-speed="1">1x</button>
-                        <button class="speed-btn" onclick="setPlaybackSpeed(1.5)" data-speed="1.5">1.5x</button>
-                        <button class="speed-btn" onclick="setPlaybackSpeed(2)" data-speed="2">2x</button>
-                        <button class="speed-btn" onclick="setPlaybackSpeed(3)" data-speed="3">3x</button>
-                    </div>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <button class="control-btn" onclick="startDemo()" id="startBtn">▶ Start Demo</button>
-                <button class="control-btn" onclick="pauseDemo()" id="pauseBtn" disabled>⏸ Pause</button>
-                <button class="control-btn" onclick="resetDemo()" id="resetBtn">🔄 Reset</button>
             </div>
         </div>
     </div>
@@ -1818,7 +1832,7 @@
                                     <div style="font-size: 12px; color: #666;">Pay</div>
                                 </div>
                                 <div style="text-align: center;">
-                                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px; font-size: 24px;">📱</div>
+                                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px; font-size: 18px; font-weight: 700; color: #0a2540;">PH</div>
                                     <div style="font-size: 12px; color: #666;">Recharge</div>
                                 </div>
                                 <div style="text-align: center;">
@@ -1854,7 +1868,7 @@
                         <div class="nav-label">QR</div>
                     </div>
                     <div class="nav-item">
-                        <div class="nav-icon">👤</div>
+                        <div class="nav-icon">P</div>
                         <div class="nav-label">Profile</div>
                     </div>
                 `;
@@ -1997,7 +2011,7 @@
                     <div class="profile-page active">
                         <div style="padding: 0 20px;">
                             <div style="background: #fff; border-radius: 15px; padding: 25px; margin-bottom: 20px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
-                                <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #2c5282 0%, #4a90e2 100%); border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #fff;">👤</div>
+                                <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #2c5282 0%, #4a90e2 100%); border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 700; color: #fff; text-transform: uppercase;">JD</div>
                                 <div style="font-weight: 600; font-size: 20px; margin-bottom: 5px;">John Doe</div>
                                 <div style="font-size: 14px; color: #666;">Member since Oct 2025</div>
                             </div>
@@ -2044,7 +2058,7 @@
                         <div class="nav-label">QR</div>
                     </div>
                     <div class="nav-item active">
-                        <div class="nav-icon">👤</div>
+                        <div class="nav-icon">P</div>
                         <div class="nav-label">Profile</div>
                     </div>
                 `;
@@ -2061,8 +2075,8 @@
                 html = `
                     <div style="background: linear-gradient(135deg, #0a2540 0%, #1a365d 100%); height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; color: #fff;">
                         <div style="width: 200px; height: 200px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 30px; position: relative;">
-                            <div style="width: 150px; height: 150px; border: 2px solid rgba(255,255,255,0.5); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 64px;">👤</div>
-                            <div style="position: absolute; bottom: 20px; right: 20px; width: 40px; height: 40px; background: #d4af37; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">📷</div>
+                            <div style="width: 150px; height: 150px; border: 2px solid rgba(255,255,255,0.5); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: 700; color: #fff; text-transform: uppercase;">JD</div>
+                            <div style="position: absolute; bottom: 20px; right: 20px; width: 40px; height: 40px; background: #d4af37; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; color: #0a2540;">CAM</div>
                         </div>
                         <h1 style="font-size: 24px; margin-bottom: 15px; text-align: center;">Face Verification</h1>
                         <p style="font-size: 14px; opacity: 0.9; text-align: center; margin-bottom: 30px; line-height: 1.6;">Please position your face within the frame and look directly at the camera.</p>
@@ -2086,7 +2100,7 @@
                         <div class="nav-label">QR</div>
                     </div>
                     <div class="nav-item">
-                        <div class="nav-icon">👤</div>
+                        <div class="nav-icon">P</div>
                         <div class="nav-label">Profile</div>
                     </div>
                 `;
@@ -2222,10 +2236,10 @@
                 solutionCard.innerHTML = `
                     <h4>Automated Solution</h4>
                     <ul class="solution-list">
-                        <li>✅ Show simplified payment flow guide</li>
-                        <li>✅ Highlight "Quick Pay" option for faster checkout</li>
-                        <li>✅ Display customer support chat button</li>
-                        <li>✅ Offer one-click payment for returning users</li>
+                        <li>Show simplified payment flow guide</li>
+                        <li>Highlight "Quick Pay" option for faster checkout</li>
+                        <li>Display customer support chat button</li>
+                        <li>Offer one-click payment for returning users</li>
                     </ul>
                 `;
                 solutionCard.classList.add('show');
@@ -2241,10 +2255,10 @@
                 solutionCard.innerHTML = `
                     <h4>Automated Solution</h4>
                     <ul class="solution-list">
-                        <li>✅ Display limited-time promotion banner</li>
-                        <li>✅ Show personalized voucher recommendations</li>
-                        <li>✅ Trigger "First Transaction Bonus" notification</li>
-                        <li>✅ Provide step-by-step transaction tutorial</li>
+                        <li>Display limited-time promotion banner</li>
+                        <li>Show personalized voucher recommendations</li>
+                        <li>Trigger "First Transaction Bonus" notification</li>
+                        <li>Provide step-by-step transaction tutorial</li>
                     </ul>
                 `;
                 solutionCard.classList.add('show');
@@ -2260,10 +2274,10 @@
                 solutionCard.innerHTML = `
                     <h4>Automated Solution</h4>
                     <ul class="solution-list">
-                        <li>✅ Simplify navigation with prominent "Pay Now" button</li>
-                        <li>✅ Reduce form fields to essential information only</li>
-                        <li>✅ Enable auto-fill for faster checkout</li>
-                        <li>✅ Show progress indicator for transaction steps</li>
+                        <li>Simplify navigation with prominent "Pay Now" button</li>
+                        <li>Reduce form fields to essential information only</li>
+                        <li>Enable auto-fill for faster checkout</li>
+                        <li>Show progress indicator for transaction steps</li>
                     </ul>
                 `;
                 solutionCard.classList.add('show');
