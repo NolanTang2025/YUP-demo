@@ -13,16 +13,29 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Inter', 'SF Pro Display', Arial, sans-serif;
-            background: #0f172a;
+            background: #0a0e27;
             background-image: 
-                radial-gradient(at 0% 0%, rgba(15, 23, 42, 1) 0%, transparent 50%),
-                radial-gradient(at 100% 0%, rgba(30, 58, 138, 0.15) 0%, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(15, 23, 42, 1) 0%, transparent 50%),
-                radial-gradient(at 0% 100%, rgba(30, 58, 138, 0.1) 0%, transparent 50%);
+                radial-gradient(circle at 20% 30%, rgba(30, 58, 138, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(15, 23, 42, 0.2) 0%, transparent 50%),
+                radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.03) 0%, transparent 70%);
             min-height: 100vh;
-            padding: 24px;
+            padding: 32px;
             overflow-x: hidden;
             color: #1e293b;
+            position: relative;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255, 255, 255, 0.01) 2px, rgba(255, 255, 255, 0.01) 4px);
+            pointer-events: none;
+            z-index: 0;
         }
 
         .demo-container {
@@ -30,19 +43,22 @@
             margin: 0 auto;
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 32px;
-            height: calc(100vh - 48px);
+            gap: 40px;
+            height: calc(100vh - 64px);
+            position: relative;
+            z-index: 1;
         }
 
         /* Left Side: Mobile App Simulation */
         .mobile-app-container {
             background: linear-gradient(145deg, #1a1a1a 0%, #0a0a0a 100%);
-            border-radius: 32px;
-            padding: 24px;
+            border-radius: 36px;
+            padding: 32px;
             box-shadow: 
-                0 32px 64px rgba(0, 0, 0, 0.4),
-                0 0 0 1px rgba(255, 255, 255, 0.05),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                0 40px 80px rgba(0, 0, 0, 0.5),
+                0 0 0 1px rgba(255, 255, 255, 0.08),
+                inset 0 1px 0 rgba(255, 255, 255, 0.12),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.3);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -56,25 +72,40 @@
             top: 0;
             left: 0;
             right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.3), transparent);
+            z-index: 1;
+        }
+        
+        .mobile-app-container::after {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            bottom: 20px;
+            border-radius: 28px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            pointer-events: none;
         }
 
         .phone-frame {
             width: 375px;
             height: 812px;
             background: #ffffff;
-            border-radius: 40px;
+            border-radius: 44px;
             overflow: hidden;
             position: relative;
             box-shadow: 
-                0 20px 60px rgba(0, 0, 0, 0.3),
-                0 0 0 8px rgba(0, 0, 0, 0.2),
-                0 0 0 12px rgba(0, 0, 0, 0.1),
-                inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+                0 25px 70px rgba(0, 0, 0, 0.35),
+                0 0 0 10px rgba(0, 0, 0, 0.25),
+                0 0 0 14px rgba(0, 0, 0, 0.15),
+                inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+                inset 0 2px 4px rgba(255, 255, 255, 0.5);
             display: flex;
             flex-direction: column;
             margin-top: 0;
+            z-index: 2;
         }
         
         .phone-frame::before {
@@ -113,6 +144,65 @@
             background: #f5f5f5;
             position: relative;
             min-height: 0;
+        }
+        
+        /* Highlight box for interactive elements */
+        .interaction-highlight {
+            position: absolute;
+            pointer-events: none;
+            z-index: 9999;
+            border: 4px solid #3b82f6;
+            border-radius: 12px;
+            box-shadow: 
+                0 0 0 4px rgba(59, 130, 246, 0.3),
+                0 0 0 8px rgba(59, 130, 246, 0.15),
+                0 0 30px rgba(59, 130, 246, 0.6),
+                inset 0 0 20px rgba(59, 130, 246, 0.1);
+            background: rgba(59, 130, 246, 0.05);
+            animation: highlightPulse 1.5s ease-in-out infinite;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        @keyframes highlightPulse {
+            0%, 100% {
+                border-color: #3b82f6;
+                box-shadow: 
+                    0 0 0 4px rgba(59, 130, 246, 0.3),
+                    0 0 0 8px rgba(59, 130, 246, 0.15),
+                    0 0 30px rgba(59, 130, 246, 0.6),
+                    inset 0 0 20px rgba(59, 130, 246, 0.1);
+            }
+            50% {
+                border-color: #2563eb;
+                box-shadow: 
+                    0 0 0 6px rgba(59, 130, 246, 0.4),
+                    0 0 0 12px rgba(59, 130, 246, 0.2),
+                    0 0 40px rgba(59, 130, 246, 0.7),
+                    inset 0 0 20px rgba(59, 130, 246, 0.15);
+            }
+        }
+        
+        .interaction-highlight.clicking {
+            border-color: #d4af37;
+            background: rgba(212, 175, 55, 0.1);
+            box-shadow: 
+                0 0 0 6px rgba(212, 175, 55, 0.4),
+                0 0 0 12px rgba(212, 175, 55, 0.2),
+                0 0 40px rgba(212, 175, 55, 0.7),
+                inset 0 0 20px rgba(212, 175, 55, 0.15);
+            animation: highlightClick 0.4s ease-out;
+        }
+        
+        @keyframes highlightClick {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(0.95);
+            }
+            100% {
+                transform: scale(1);
+            }
         }
 
         /* YUP App UI Components */
@@ -426,15 +516,28 @@
 
         /* Right Side: Intent Analysis Dashboard */
         .intent-dashboard {
-            background: #ffffff;
-            border-radius: 24px;
-            padding: 32px;
+            background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 28px;
+            padding: 40px;
             box-shadow: 
-                0 20px 60px rgba(0, 0, 0, 0.15),
-                0 0 0 1px rgba(0, 0, 0, 0.05);
+                0 25px 70px rgba(0, 0, 0, 0.12),
+                0 0 0 1px rgba(0, 0, 0, 0.06),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
             overflow-y: auto;
-            max-height: calc(100vh - 48px);
-            backdrop-filter: blur(10px);
+            max-height: calc(100vh - 64px);
+            backdrop-filter: blur(20px);
+            position: relative;
+        }
+        
+        .intent-dashboard::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%);
+            border-radius: 28px 28px 0 0;
         }
         
         .intent-dashboard::-webkit-scrollbar {
@@ -457,37 +560,43 @@
 
         .dashboard-header {
             text-align: center;
-            margin-bottom: 32px;
-            padding-bottom: 24px;
-            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 40px;
+            padding-bottom: 28px;
+            border-bottom: 2px solid #f1f5f9;
             position: relative;
+            padding-top: 8px;
         }
         
         .dashboard-header::after {
             content: '';
             position: absolute;
-            bottom: -1px;
+            bottom: -2px;
             left: 50%;
             transform: translateX(-50%);
-            width: 80px;
-            height: 3px;
-            background: linear-gradient(90deg, #d4af37 0%, #f4d03f 100%);
+            width: 120px;
+            height: 4px;
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%);
             border-radius: 2px;
         }
 
         .dashboard-header h1 {
             color: #0f172a;
-            font-size: 28px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            letter-spacing: -0.5px;
+            font-size: 32px;
+            font-weight: 800;
+            margin-bottom: 12px;
+            letter-spacing: -0.8px;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
         .dashboard-header p {
             color: #64748b;
             font-size: 15px;
-            font-weight: 400;
-            line-height: 1.5;
+            font-weight: 500;
+            line-height: 1.6;
+            letter-spacing: 0.2px;
         }
 
         .user-selector {
@@ -540,13 +649,15 @@
         }
 
         .metric-card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 24px;
+            background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 20px;
+            padding: 28px 24px;
             text-align: center;
-            border: 1px solid #e2e8f0;
+            border: 1.5px solid #e2e8f0;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            box-shadow: 
+                0 2px 8px rgba(0, 0, 0, 0.04),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
             position: relative;
             overflow: hidden;
         }
@@ -557,15 +668,33 @@
             top: 0;
             left: 0;
             right: 0;
-            height: 3px;
+            height: 4px;
             background: #e2e8f0;
             transition: all 0.3s;
         }
+        
+        .metric-card::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.05) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
 
         .metric-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+            transform: translateY(-6px) scale(1.02);
+            box-shadow: 
+                0 16px 32px rgba(0, 0, 0, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
             border-color: #cbd5e1;
+        }
+        
+        .metric-card:hover::after {
+            opacity: 1;
         }
 
         .metric-card.high {
@@ -593,32 +722,36 @@
         }
 
         .metric-label {
-            font-size: 13px;
+            font-size: 12px;
             color: #64748b;
-            margin-bottom: 12px;
-            font-weight: 500;
+            margin-bottom: 14px;
+            font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.8px;
+            opacity: 0.8;
         }
 
         .metric-value {
-            font-size: 32px;
-            font-weight: 700;
+            font-size: 36px;
+            font-weight: 800;
             color: #0f172a;
-            letter-spacing: -1px;
+            letter-spacing: -1.5px;
             font-variant-numeric: tabular-nums;
+            line-height: 1.2;
         }
 
         .intent-type {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #334155 100%);
             color: #fff;
-            border-radius: 20px;
-            padding: 28px;
-            margin-bottom: 32px;
+            border-radius: 24px;
+            padding: 32px 28px;
+            margin-bottom: 36px;
             text-align: center;
             box-shadow: 
-                0 10px 30px rgba(15, 23, 42, 0.2),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                0 12px 40px rgba(15, 23, 42, 0.25),
+                0 0 0 1px rgba(255, 255, 255, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.2);
             position: relative;
             overflow: hidden;
         }
@@ -630,8 +763,18 @@
             right: -50%;
             width: 200%;
             height: 200%;
-            background: radial-gradient(circle, rgba(212, 175, 55, 0.1) 0%, transparent 70%);
+            background: radial-gradient(circle, rgba(212, 175, 55, 0.15) 0%, transparent 70%);
             animation: rotate 20s linear infinite;
+        }
+        
+        .intent-type::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
         }
         
         @keyframes rotate {
@@ -658,19 +801,37 @@
         }
 
         .journey-timeline {
-            background: #f8fafc;
-            border-radius: 20px;
-            padding: 24px;
-            margin-bottom: 32px;
-            border: 1px solid #e2e8f0;
+            background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 28px;
+            margin-bottom: 36px;
+            border: 1.5px solid #e2e8f0;
+            box-shadow: 
+                0 4px 12px rgba(0, 0, 0, 0.04),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
+            position: relative;
+        }
+        
+        .journey-timeline::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%);
+            border-radius: 24px 24px 0 0;
         }
 
         .journey-timeline h3 {
             color: #0f172a;
-            margin-bottom: 20px;
-            font-size: 18px;
-            font-weight: 600;
-            letter-spacing: -0.3px;
+            margin-bottom: 24px;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.4px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         #journeyTimeline {
@@ -700,20 +861,96 @@
         .timeline-item {
             display: flex;
             align-items: center;
-            padding: 14px 16px;
-            margin-bottom: 8px;
-            background: #ffffff;
-            border-radius: 12px;
-            border-left: 3px solid #3b82f6;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            padding: 16px 18px;
+            margin-bottom: 10px;
+            background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 14px;
+            border-left: 4px solid #3b82f6;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 2px 4px rgba(0, 0, 0, 0.04),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .timeline-item:hover {
+            background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+            transform: translateX(4px);
+            box-shadow: 
+                0 4px 12px rgba(59, 130, 246, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+        
+        .timeline-item:hover::after {
+            content: '👆';
+            position: absolute;
+            right: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 20px;
+            opacity: 0.7;
+            animation: pointPulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes pointPulse {
+            0%, 100% { transform: translateY(-50%) scale(1); opacity: 0.7; }
+            50% { transform: translateY(-50%) scale(1.2); opacity: 1; }
+        }
+        
+        .timeline-item:active {
+            transform: translateX(2px) scale(0.98);
+        }
+        
+        .timeline-item.clicked {
+            animation: clickRipple 0.6s ease-out;
+        }
+        
+        @keyframes clickRipple {
+            0% {
+                box-shadow: 
+                    0 2px 4px rgba(0, 0, 0, 0.04),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+                    0 0 0 0 rgba(59, 130, 246, 0.6);
+            }
+            50% {
+                box-shadow: 
+                    0 2px 4px rgba(0, 0, 0, 0.04),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+                    0 0 0 20px rgba(59, 130, 246, 0);
+            }
+            100% {
+                box-shadow: 
+                    0 2px 4px rgba(0, 0, 0, 0.04),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+            }
+        }
+        
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: #3b82f6;
+            border-radius: 14px 0 0 14px;
+            transition: all 0.25s;
         }
 
         .timeline-item.active {
             border-left-color: #d4af37;
             background: linear-gradient(90deg, #fffbeb 0%, #ffffff 100%);
-            transform: translateX(4px);
-            box-shadow: 0 4px 12px rgba(212, 175, 55, 0.2);
+            transform: translateX(6px) scale(1.02);
+            box-shadow: 
+                0 8px 20px rgba(212, 175, 55, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            border-left-width: 5px;
+        }
+        
+        .timeline-item.active::before {
+            width: 5px;
+            background: linear-gradient(180deg, #d4af37 0%, #f4d03f 100%);
         }
 
         .timeline-item.completed {
@@ -721,24 +958,45 @@
         }
 
         .timeline-icon {
-            width: 32px;
-            height: 32px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
             color: #fff;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-right: 16px;
-            font-size: 13px;
-            font-weight: 600;
-            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+            margin-right: 18px;
+            font-size: 14px;
+            font-weight: 700;
+            box-shadow: 
+                0 4px 8px rgba(59, 130, 246, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
             flex-shrink: 0;
+            position: relative;
+        }
+        
+        .timeline-icon::after {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            opacity: 0.3;
+            z-index: -1;
+            filter: blur(4px);
         }
 
         .timeline-item.active .timeline-icon {
             background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
-            box-shadow: 0 4px 8px rgba(212, 175, 55, 0.4);
+            box-shadow: 
+                0 6px 12px rgba(212, 175, 55, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            transform: scale(1.1);
+        }
+        
+        .timeline-item.active .timeline-icon::after {
+            background: linear-gradient(135deg, #d4af37, #f4d03f);
         }
 
         .timeline-content {
@@ -746,14 +1004,18 @@
         }
 
         .timeline-event {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 5px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 6px;
+            font-size: 14px;
+            letter-spacing: -0.2px;
         }
 
         .timeline-time {
             font-size: 12px;
-            color: #999;
+            color: #64748b;
+            font-weight: 500;
+            letter-spacing: 0.2px;
         }
 
         /* Pain Point Detection & Solutions */
@@ -902,61 +1164,137 @@
         }
 
         .control-panel {
-            background: #ffffff;
-            border-radius: 20px;
-            padding: 24px;
-            margin-top: 24px;
+            background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 24px;
+            padding: 28px;
+            margin-top: 32px;
             text-align: center;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1.5px solid #e2e8f0;
+            box-shadow: 
+                0 4px 12px rgba(0, 0, 0, 0.06),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
+            position: relative;
+        }
+        
+        .control-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%);
+            border-radius: 24px 24px 0 0;
         }
 
         .control-btn {
-            padding: 12px 24px;
-            margin: 0 8px;
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            padding: 14px 28px;
+            margin: 0 10px;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
             color: #fff;
             border: none;
-            border-radius: 12px;
+            border-radius: 14px;
             font-size: 14px;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 2px 4px rgba(15, 23, 42, 0.2);
-            letter-spacing: 0.3px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 4px 12px rgba(15, 23, 42, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            letter-spacing: 0.4px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .control-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
         }
 
         .control-btn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.3);
+            transform: translateY(-3px);
+            box-shadow: 
+                0 8px 20px rgba(15, 23, 42, 0.35),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15);
+        }
+        
+        .control-btn:hover:not(:disabled)::before {
+            left: 100%;
         }
         
         .control-btn:active:not(:disabled) {
-            transform: translateY(0);
+            transform: translateY(-1px);
         }
 
         .control-btn:disabled {
-            opacity: 0.5;
+            opacity: 0.4;
             cursor: not-allowed;
             transform: none;
+            background: #e2e8f0;
+            color: #94a3b8;
         }
 
         .progress-bar {
             width: 100%;
-            height: 6px;
-            background: #e2e8f0;
-            border-radius: 3px;
-            margin: 24px 0;
+            height: 8px;
+            background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 100%);
+            border-radius: 4px;
+            margin: 28px 0;
             overflow: hidden;
-            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+            box-shadow: 
+                inset 0 2px 4px rgba(0, 0, 0, 0.06),
+                0 1px 2px rgba(0, 0, 0, 0.05);
+            position: relative;
+        }
+        
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
         }
 
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #0f172a 0%, #3b82f6 50%, #d4af37 100%);
+            background: linear-gradient(90deg, #0f172a 0%, #3b82f6 40%, #8b5cf6 60%, #d4af37 100%);
             width: 0%;
-            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 0 15px rgba(59, 130, 246, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            animation: progressShine 2s infinite;
+        }
+        
+        @keyframes progressShine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
         }
 
         @media (max-width: 1400px) {
@@ -993,7 +1331,7 @@
         <!-- Right Side: Intent Analysis Dashboard -->
         <div class="intent-dashboard">
             <div class="dashboard-header">
-                <h1>🎯 Real-time Intent Analysis</h1>
+                <h1>Real-time Intent Analysis</h1>
                 <p>Advanced AI-powered user intent recognition for credit card industry</p>
             </div>
 
@@ -1010,38 +1348,40 @@
             </div>
 
             <!-- Risk Intent Radar Chart -->
-            <div class="section" style="background: #ffffff; border-radius: 20px; padding: 28px; margin-bottom: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                <h3 style="color: #0f172a; margin-bottom: 24px; font-size: 18px; font-weight: 600; letter-spacing: -0.3px;">🎯 Risk Intent Radar</h3>
+            <div class="section" style="background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%); border-radius: 24px; padding: 32px; margin-bottom: 36px; border: 1.5px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8); position: relative;">
+                <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%); border-radius: 24px 24px 0 0;"></div>
+                <h3 style="color: #0f172a; margin-bottom: 28px; font-size: 20px; font-weight: 700; letter-spacing: -0.4px; display: flex; align-items: center; gap: 10px; margin-top: 4px;"><span style="font-size: 24px;">🎯</span>Risk Intent Radar</h3>
                 <div id="riskRadarChart" style="height: 400px;"></div>
-                <div style="margin-top: 24px; padding: 20px; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); border-radius: 16px; border: 1px solid #e2e8f0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <div style="margin-top: 28px; padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); border-radius: 20px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <div>
-                            <div style="font-weight: 700; font-size: 20px; color: #0f172a; letter-spacing: -0.5px; margin-bottom: 4px;" id="riskScoreDisplay">Risk Score: 0</div>
-                            <div style="font-size: 14px; color: #64748b; font-weight: 500;" id="riskLevelDisplay">Level: Normal Consultation</div>
+                            <div style="font-weight: 800; font-size: 22px; color: #0f172a; letter-spacing: -0.6px; margin-bottom: 6px;" id="riskScoreDisplay">Risk Score: 0</div>
+                            <div style="font-size: 14px; color: #64748b; font-weight: 600; letter-spacing: 0.2px;" id="riskLevelDisplay">Level: Normal Consultation</div>
                         </div>
-                        <div id="riskIndicator" style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #10b981 0%, #34d399 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 24px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">
-                            0
+                        <div id="riskIndicator" style="width: 72px; height: 72px; border-radius: 50%; background: linear-gradient(135deg, #10b981 0%, #34d399 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 26px; box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35), inset 0 1px 0 rgba(255,255,255,0.2); position: relative;">
+                            <span style="position: relative; z-index: 1;">0</span>
+                            <div style="position: absolute; inset: -4px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #34d399); opacity: 0.3; filter: blur(8px); z-index: 0;"></div>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 12px; margin-top: 20px;">
-                        <div style="flex: 1; padding: 12px; background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-radius: 12px; text-align: center; border: 1px solid #10b981;">
-                            <div style="font-size: 11px; color: #065f46; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">0-20</div>
-                            <div style="font-weight: 700; color: #059669; font-size: 14px;">Normal</div>
+                    <div style="display: flex; gap: 14px; margin-top: 24px;">
+                        <div style="flex: 1; padding: 14px; background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-radius: 14px; text-align: center; border: 2px solid #10b981; box-shadow: 0 2px 6px rgba(16, 185, 129, 0.15);">
+                            <div style="font-size: 11px; color: #065f46; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">0-20</div>
+                            <div style="font-weight: 800; color: #059669; font-size: 15px; letter-spacing: 0.2px;">Normal</div>
                         </div>
-                        <div style="flex: 1; padding: 12px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 12px; text-align: center; border: 1px solid #f59e0b;">
-                            <div style="font-size: 11px; color: #92400e; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">20-60</div>
-                            <div style="font-weight: 700; color: #d97706; font-size: 14px;">Potential Risk</div>
+                        <div style="flex: 1; padding: 14px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 14px; text-align: center; border: 2px solid #f59e0b; box-shadow: 0 2px 6px rgba(245, 158, 11, 0.15);">
+                            <div style="font-size: 11px; color: #92400e; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">20-60</div>
+                            <div style="font-weight: 800; color: #d97706; font-size: 15px; letter-spacing: 0.2px;">Potential Risk</div>
                         </div>
-                        <div style="flex: 1; padding: 12px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-radius: 12px; text-align: center; border: 1px solid #ef4444;">
-                            <div style="font-size: 11px; color: #991b1b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">60-100</div>
-                            <div style="font-weight: 700; color: #dc2626; font-size: 14px;">High Risk</div>
+                        <div style="flex: 1; padding: 14px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-radius: 14px; text-align: center; border: 2px solid #ef4444; box-shadow: 0 2px 6px rgba(239, 68, 68, 0.15);">
+                            <div style="font-size: 11px; color: #991b1b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">60-100</div>
+                            <div style="font-weight: 800; color: #dc2626; font-size: 15px; letter-spacing: 0.2px;">High Risk</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="journey-timeline">
-                <h3>📊 User Journey Timeline</h3>
+                <h3><span style="font-size: 24px; margin-right: 8px;">📊</span>User Journey Timeline</h3>
                 <div id="journeyTimeline">
                     <!-- Timeline will be dynamically loaded -->
                 </div>
@@ -1909,6 +2249,178 @@
 
             timeline.innerHTML = html;
             console.log(`Timeline rendered with ${currentUserJourney.length} items`);
+            
+            // Add click and hover event listeners to timeline items
+            const timelineItems = timeline.querySelectorAll('.timeline-item');
+            timelineItems.forEach((item, index) => {
+                // Hover effect
+                item.addEventListener('mouseenter', function(e) {
+                    this.style.cursor = 'pointer';
+                });
+                
+                // Click effect
+                item.addEventListener('click', function(e) {
+                    // Remove clicked class from all items
+                    timelineItems.forEach(i => i.classList.remove('clicked'));
+                    // Add clicked class to current item
+                    this.classList.add('clicked');
+                    
+                    // Jump to this event
+                    if (index !== currentEventIndex) {
+                        pauseDemo();
+                        currentEventIndex = index;
+                        updateDemo();
+                    }
+                    
+                    // Show click effect in mobile app
+                    showMobileClick(e, index);
+                });
+            });
+        }
+        
+        // Show highlight box for interactive element
+        function showMobileClick(event, eventIndex) {
+            const phoneContent = document.getElementById('phoneContent');
+            
+            if (!phoneContent) {
+                return;
+            }
+            
+            // Remove any existing highlight
+            const existingHighlight = phoneContent.querySelector('.interaction-highlight');
+            if (existingHighlight) {
+                existingHighlight.remove();
+            }
+            
+            // Wait a bit for DOM to update
+            setTimeout(() => {
+                // Get clickable elements in mobile app
+                const clickableElements = phoneContent.querySelectorAll('button, .card, .menu-item, .nav-item, .voucher-card, .task-item, .action-btn, .quick-action, .home-card, .profile-item, .btn-primary, .floating-btn, a, .task-card, .voucher-item');
+                
+                if (clickableElements.length > 0) {
+                    // Calculate position based on event index and event type
+                    let targetElement = null;
+                    const currentEvent = currentUserJourney[eventIndex];
+                    const eventName = currentEvent ? currentEvent.event_name.toLowerCase() : '';
+                    
+                    // Try to find element matching the event
+                    for (let elem of clickableElements) {
+                        const elemText = elem.textContent.toLowerCase();
+                        const elemClasses = elem.className.toLowerCase();
+                        
+                        if (eventName.includes('home') && (elemText.includes('home') || elemClasses.includes('home'))) {
+                            targetElement = elem;
+                            break;
+                        } else if ((eventName.includes('payment') || eventName.includes('pay') || eventName.includes('checkout'))) {
+                            if (elemText.includes('pay') || elemClasses.includes('btn-primary') || elemText.includes('checkout') || elemClasses.includes('payment')) {
+                                targetElement = elem;
+                                break;
+                            }
+                        } else if (eventName.includes('voucher')) {
+                            if (elemClasses.includes('voucher') || elemText.includes('voucher')) {
+                                targetElement = elem;
+                                break;
+                            }
+                        } else if (eventName.includes('qr') || eventName.includes('scan')) {
+                            if (elemText.includes('scan') || elemText.includes('qr') || elemText.includes('camera') || elemClasses.includes('qr')) {
+                                targetElement = elem;
+                                break;
+                            }
+                        } else if (eventName.includes('profile')) {
+                            if (elemClasses.includes('profile') || elemText.includes('profile')) {
+                                targetElement = elem;
+                                break;
+                            }
+                        } else if (eventName.includes('task')) {
+                            if (elemClasses.includes('task') || elemText.includes('task')) {
+                                targetElement = elem;
+                                break;
+                            }
+                        } else if (eventName.includes('activate') || eventName.includes('activation')) {
+                            if (elemText.includes('activate') || elemClasses.includes('activate')) {
+                                targetElement = elem;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Fallback to index-based selection
+                    if (!targetElement) {
+                        const elementIndex = Math.min(eventIndex % clickableElements.length, clickableElements.length - 1);
+                        targetElement = clickableElements[elementIndex];
+                    }
+                    
+                    if (targetElement) {
+                        const rect = targetElement.getBoundingClientRect();
+                        const phoneRect = phoneContent.getBoundingClientRect();
+                        
+                        // Calculate position and size relative to phone content
+                        const left = rect.left - phoneRect.left - 4;
+                        const top = rect.top - phoneRect.top - 4;
+                        const width = rect.width + 8;
+                        const height = rect.height + 8;
+                        
+                        // Create highlight box
+                        const highlight = document.createElement('div');
+                        highlight.className = 'interaction-highlight';
+                        highlight.style.left = left + 'px';
+                        highlight.style.top = top + 'px';
+                        highlight.style.width = width + 'px';
+                        highlight.style.height = height + 'px';
+                        
+                        phoneContent.appendChild(highlight);
+                        
+                        // Add click animation
+                        setTimeout(() => {
+                            highlight.classList.add('clicking');
+                            setTimeout(() => {
+                                highlight.classList.remove('clicking');
+                            }, 400);
+                        }, 200);
+                        
+                        // Remove highlight after animation
+                        setTimeout(() => {
+                            if (highlight.parentNode) {
+                                highlight.style.opacity = '0';
+                                highlight.style.transition = 'opacity 0.3s ease';
+                                setTimeout(() => {
+                                    highlight.remove();
+                                }, 300);
+                            }
+                        }, 2000);
+                    }
+                }
+            }, 200);
+        }
+        
+        // Track mouse movement in timeline for hover preview
+        function initTimelineHoverTracking() {
+            const timeline = document.getElementById('journeyTimeline');
+            if (!timeline) return;
+            
+            timeline.addEventListener('mousemove', function(e) {
+                const items = timeline.querySelectorAll('.timeline-item');
+                items.forEach(item => {
+                    const rect = item.getBoundingClientRect();
+                    const isHovering = e.clientX >= rect.left && e.clientX <= rect.right &&
+                                      e.clientY >= rect.top && e.clientY <= rect.bottom;
+                    
+                    if (isHovering) {
+                        item.style.borderLeftColor = '#8b5cf6';
+                        item.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.9)';
+                    }
+                });
+            });
+            
+            timeline.addEventListener('mouseleave', function() {
+                const items = timeline.querySelectorAll('.timeline-item');
+                items.forEach(item => {
+                    if (!item.classList.contains('active')) {
+                        item.style.borderLeftColor = '';
+                        item.style.boxShadow = '';
+                    }
+                });
+            });
         }
 
         function startDemo() {
@@ -1976,6 +2488,11 @@
                 const currentEvent = currentUserJourney[currentEventIndex];
                 const eventName = currentEvent.event_name;
                 renderMobileApp(null, eventName);
+                
+                // Show click effect for this event with longer delay to ensure DOM is ready
+                setTimeout(() => {
+                    showMobileClick(null, currentEventIndex);
+                }, 400);
             }
 
             // Update intent metrics
@@ -1986,6 +2503,11 @@
 
             // Update timeline
             renderJourneyTimeline();
+            
+            // Re-initialize hover tracking
+            setTimeout(() => {
+                initTimelineHoverTracking();
+            }, 100);
 
             // Scroll timeline to active item
             const activeItem = document.querySelector('.timeline-item.active');
@@ -2164,6 +2686,10 @@
         // Initialize on load
         window.addEventListener('load', () => {
             loadUserJourneys();
+            // Initialize timeline hover tracking
+            setTimeout(() => {
+                initTimelineHoverTracking();
+            }, 500);
         });
     </script>
 </body>
