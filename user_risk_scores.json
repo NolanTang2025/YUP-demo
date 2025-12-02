@@ -1,0 +1,28 @@
+{
+  "011c40cc5105419293c6a52635546b4a": {
+    "risk_score": 59.776119402985074,
+    "risk_factors": {
+      "high_repetition": 25.37313432835821,
+      "rapid_switching": 0.0,
+      "long_idle": 15.0,
+      "failed_attempts": 0.0,
+      "unusual_pattern": 19.402985074626866,
+      "high_urgency": 0.0
+    },
+    "total_events": 67,
+    "has_transaction": true
+  },
+  "01ef6ac2baf84efe9a762f78aeecbd44": {
+    "risk_score": 67.14151594256947,
+    "risk_factors": {
+      "high_repetition": 11.612903225806452,
+      "rapid_switching": 0.0,
+      "long_idle": 3.6500000000000004,
+      "failed_attempts": 30.0,
+      "unusual_pattern": 20.0,
+      "high_urgency": 1.8786127167630085
+    },
+    "total_events": 155,
+    "has_transaction": false
+  }
+}

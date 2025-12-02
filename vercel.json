@@ -15,6 +15,14 @@
     {
       "source": "/visualizations",
       "destination": "/visualizations.html"
+    },
+    {
+      "source": "/demo",
+      "destination": "/intent_demo.html"
+    },
+    {
+      "source": "/risk",
+      "destination": "/risk_detection_demo.html"
     }
   ],
   "headers": [
@@ -28,6 +36,15 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=3600, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/(.*\\.json)",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json; charset=utf-8"
         }
       ]
     }

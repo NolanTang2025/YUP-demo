@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Risk Detection - Early High-Risk User Identification</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0a2540 0%, #1a365d 50%, #2c5282 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: #fff;
+            margin-bottom: 40px;
+            padding: 40px 20px;
+        }
+
+        .header h1 {
+            font-size: 42px;
+            margin-bottom: 15px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 18px;
+            opacity: 0.9;
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: #fff;
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-value {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        .stat-card.normal .stat-value {
+            color: #28a745;
+        }
+
+        .stat-card.potential .stat-value {
+            color: #ffc107;
+        }
+
+        .stat-card.high .stat-value {
+            color: #dc3545;
+        }
+
+        .users-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .user-card {
+            background: #fff;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+            transition: all 0.3s;
+            border-left: 5px solid #e0e0e0;
+        }
+
+        .user-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .user-card.normal {
+            border-left-color: #28a745;
+        }
+
+        .user-card.potential {
+            border-left-color: #ffc107;
+        }
+
+        .user-card.high {
+            border-left-color: #dc3545;
+            background: linear-gradient(135deg, #fff 0%, #fff5f5 100%);
+        }
+
+        .user-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .user-id {
+            font-weight: 600;
+            color: #0a2540;
+            font-size: 16px;
+        }
+
+        .risk-badge {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .risk-badge.normal {
+            background: #d4edda;
+            color: #28a745;
+        }
+
+        .risk-badge.potential {
+            background: #fff3cd;
+            color: #ffc107;
+        }
+
+        .risk-badge.high {
+            background: #f8d7da;
+            color: #dc3545;
+        }
+
+        .risk-score {
+            font-size: 36px;
+            font-weight: 700;
+            margin: 15px 0;
+        }
+
+        .risk-score.normal {
+            color: #28a745;
+        }
+
+        .risk-score.potential {
+            color: #ffc107;
+        }
+
+        .risk-score.high {
+            color: #dc3545;
+        }
+
+        .risk-factors {
+            margin-top: 15px;
+        }
+
+        .risk-factor {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .risk-factor:last-child {
+            border-bottom: none;
+        }
+
+        .factor-name {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .factor-value {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .factor-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+
+        .factor-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745 0%, #ffc107 50%, #dc3545 100%);
+            transition: width 0.5s;
+        }
+
+        .user-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .metric-item {
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 20px;
+            font-weight: 600;
+            color: #0a2540;
+        }
+
+        .metric-label {
+            font-size: 11px;
+            color: #999;
+            margin-top: 3px;
+        }
+
+        .chart-container {
+            background: #fff;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 40px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .chart-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #0a2540;
+            margin-bottom: 20px;
+        }
+
+        .insights-panel {
+            background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 40px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .insights-panel h2 {
+            color: #0a2540;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+
+        .insight-item {
+            background: #fff;
+            border-left: 4px solid #2c5282;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .insight-item h3 {
+            color: #0a2540;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .insight-item p {
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .highlight {
+            background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
+            color: #0a2540;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        @media (max-width: 1200px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .users-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 AI Risk Detection System</h1>
+            <p>Advanced machine learning algorithms identify high-risk users in real-time, enabling proactive intervention and fraud prevention for financial institutions.</p>
+        </div>
+
+        <div class="stats-grid" id="statsGrid">
+            <!-- Stats will be dynamically loaded -->
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Risk Distribution Analysis</div>
+            <div id="riskDistributionChart" style="height: 400px;"></div>
+        </div>
+
+        <div class="users-grid" id="usersGrid">
+            <!-- User cards will be dynamically loaded -->
+        </div>
+
+        <div class="insights-panel">
+            <h2>💡 Key Insights: How AI Identifies High-Risk Users</h2>
+            <div class="insight-item">
+                <h3>1. Behavioral Pattern Analysis</h3>
+                <p>Our AI system analyzes <span class="highlight">6 key risk factors</span> including repetition patterns, rapid switching behavior, failed transaction attempts, and unusual navigation patterns. Users with scores above <span class="highlight">60</span> are flagged for manual review.</p>
+            </div>
+            <div class="insight-item">
+                <h3>2. Real-Time Risk Scoring</h3>
+                <p>Risk scores are calculated dynamically as users interact with the platform. The system uses <span class="highlight">weighted algorithms</span> that consider event frequency, time patterns, and transaction success rates to generate a 0-100 risk score.</p>
+            </div>
+            <div class="insight-item">
+                <h3>3. Early Intervention Capability</h3>
+                <p>By identifying high-risk patterns early in the user journey, financial institutions can <span class="highlight">prevent fraud before it occurs</span>, reducing losses and improving customer trust. The system can trigger automated security checks or flag accounts for manual review.</p>
+            </div>
+            <div class="insight-item">
+                <h3>4. Continuous Learning</h3>
+                <p>The risk detection model continuously learns from historical data, improving its accuracy over time. <span class="highlight">Embedding-based similarity matching</span> helps identify users with similar risk profiles, enabling proactive risk management.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Sample user data with risk scores (simulated based on real patterns)
+        const sampleUsers = [
+            {
+                id: '011c40cc5105419293c6a52635546b4a',
+                riskScore: 59.8,
+                totalEvents: 67,
+                hasTransaction: true,
+                riskFactors: {
+                    'High Repetition': 18.5,
+                    'Rapid Switching': 12.3,
+                    'Long Idle': 8.2,
+                    'Failed Attempts': 15.0,
+                    'Unusual Pattern': 5.8,
+                    'High Urgency': 0.0
+                }
+            },
+            {
+                id: '01ef6ac2baf84efe9a762f78aeecbd4a',
+                riskScore: 67.1,
+                totalEvents: 155,
+                hasTransaction: false,
+                riskFactors: {
+                    'High Repetition': 22.1,
+                    'Rapid Switching': 15.8,
+                    'Long Idle': 5.2,
+                    'Failed Attempts': 12.0,
+                    'Unusual Pattern': 8.0,
+                    'High Urgency': 4.0
+                }
+            }
+        ];
+
+        // Generate additional sample users for demonstration
+        function generateSampleUsers() {
+            const users = [...sampleUsers];
+            const riskPatterns = [
+                { base: 15, variance: 5, level: 'normal' },
+                { base: 25, variance: 8, level: 'normal' },
+                { base: 35, variance: 10, level: 'potential' },
+                { base: 45, variance: 12, level: 'potential' },
+                { base: 55, variance: 15, level: 'potential' },
+                { base: 70, variance: 15, level: 'high' },
+                { base: 80, variance: 10, level: 'high' },
+                { base: 90, variance: 8, level: 'high' }
+            ];
+
+            for (let i = 0; i < 18; i++) {
+                const pattern = riskPatterns[i % riskPatterns.length];
+                const riskScore = Math.max(0, Math.min(100, pattern.base + (Math.random() - 0.5) * pattern.variance * 2));
+                const totalEvents = Math.floor(20 + Math.random() * 180);
+                const hasTransaction = riskScore < 50 ? Math.random() > 0.3 : Math.random() > 0.7;
+
+                // Generate risk factors that sum to approximately riskScore
+                const factors = {
+                    'High Repetition': Math.min(30, riskScore * 0.3 + Math.random() * 10),
+                    'Rapid Switching': Math.min(20, riskScore * 0.25 + Math.random() * 8),
+                    'Long Idle': Math.min(15, riskScore * 0.15 + Math.random() * 5),
+                    'Failed Attempts': Math.min(30, riskScore * 0.2 + Math.random() * 10),
+                    'Unusual Pattern': Math.min(20, riskScore * 0.15 + Math.random() * 5),
+                    'High Urgency': Math.min(25, riskScore * 0.1 + Math.random() * 5)
+                };
+
+                // Normalize to match riskScore
+                const currentSum = Object.values(factors).reduce((a, b) => a + b, 0);
+                const scale = riskScore / currentSum;
+                Object.keys(factors).forEach(key => {
+                    factors[key] = Math.min(100, factors[key] * scale);
+                });
+
+                users.push({
+                    id: `user_${String(i + 3).padStart(3, '0')}_${Math.random().toString(36).substr(2, 9)}`,
+                    riskScore: Math.round(riskScore * 10) / 10,
+                    totalEvents: totalEvents,
+                    hasTransaction: hasTransaction,
+                    riskFactors: factors
+                });
+            }
+
+            return users.sort((a, b) => b.riskScore - a.riskScore);
+        }
+
+        const allUsers = generateSampleUsers();
+
+        function getRiskLevel(score) {
+            if (score < 20) return 'normal';
+            if (score < 60) return 'potential';
+            return 'high';
+        }
+
+        function getRiskLabel(score) {
+            if (score < 20) return 'Normal Consultation';
+            if (score < 60) return 'Potential Risk';
+            return 'High Risk (Manual Intervention)';
+        }
+
+        function renderStats() {
+            const stats = {
+                total: allUsers.length,
+                normal: allUsers.filter(u => u.riskScore < 20).length,
+                potential: allUsers.filter(u => u.riskScore >= 20 && u.riskScore < 60).length,
+                high: allUsers.filter(u => u.riskScore >= 60).length
+            };
+
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value" style="color: #0a2540;">${stats.total}</div>
+                    <div class="stat-label">Total Users Analyzed</div>
+                </div>
+                <div class="stat-card normal">
+                    <div class="stat-value">${stats.normal}</div>
+                    <div class="stat-label">Normal Consultation (0-20)</div>
+                </div>
+                <div class="stat-card potential">
+                    <div class="stat-value">${stats.potential}</div>
+                    <div class="stat-label">Potential Risk (20-60)</div>
+                </div>
+                <div class="stat-card high">
+                    <div class="stat-value">${stats.high}</div>
+                    <div class="stat-label">High Risk (60-100)</div>
+                </div>
+            `;
+        }
+
+        function renderUsers() {
+            const usersGrid = document.getElementById('usersGrid');
+            usersGrid.innerHTML = allUsers.map(user => {
+                const level = getRiskLevel(user.riskScore);
+                const label = getRiskLabel(user.riskScore);
+                
+                const factorsHtml = Object.entries(user.riskFactors).map(([name, value]) => `
+                    <div class="risk-factor">
+                        <div>
+                            <div class="factor-name">${name}</div>
+                            <div class="factor-bar">
+                                <div class="factor-bar-fill" style="width: ${value}%;"></div>
+                            </div>
+                        </div>
+                        <div class="factor-value" style="color: ${value > 50 ? '#dc3545' : value > 25 ? '#ffc107' : '#28a745'};">${value.toFixed(1)}</div>
+                    </div>
+                `).join('');
+
+                return `
+                    <div class="user-card ${level}">
+                        <div class="user-header">
+                            <div class="user-id">${user.id.substring(0, 30)}...</div>
+                            <div class="risk-badge ${level}">${label}</div>
+                        </div>
+                        <div class="risk-score ${level}">${user.riskScore.toFixed(1)}</div>
+                        <div class="risk-factors">
+                            ${factorsHtml}
+                        </div>
+                        <div class="user-metrics">
+                            <div class="metric-item">
+                                <div class="metric-value">${user.totalEvents}</div>
+                                <div class="metric-label">Total Events</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${user.hasTransaction ? '✓' : '✗'}</div>
+                                <div class="metric-label">Transaction</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRiskDistributionChart() {
+            const riskRanges = {
+                '0-20': allUsers.filter(u => u.riskScore < 20).length,
+                '20-40': allUsers.filter(u => u.riskScore >= 20 && u.riskScore < 40).length,
+                '40-60': allUsers.filter(u => u.riskScore >= 40 && u.riskScore < 60).length,
+                '60-80': allUsers.filter(u => u.riskScore >= 60 && u.riskScore < 80).length,
+                '80-100': allUsers.filter(u => u.riskScore >= 80).length
+            };
+
+            const data = [{
+                x: Object.keys(riskRanges),
+                y: Object.values(riskRanges),
+                type: 'bar',
+                marker: {
+                    color: ['#28a745', '#ffc107', '#ff9800', '#f44336', '#d32f2f'],
+                    line: {
+                        color: '#fff',
+                        width: 2
+                    }
+                },
+                text: Object.values(riskRanges).map(v => v.toString()),
+                textposition: 'outside'
+            }];
+
+            const layout = {
+                title: {
+                    text: 'User Risk Score Distribution',
+                    font: { size: 20, color: '#0a2540' }
+                },
+                xaxis: {
+                    title: 'Risk Score Range',
+                    titlefont: { size: 14, color: '#666' },
+                    tickfont: { size: 12 }
+                },
+                yaxis: {
+                    title: 'Number of Users',
+                    titlefont: { size: 14, color: '#666' },
+                    tickfont: { size: 12 }
+                },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                margin: { t: 60, b: 60, l: 60, r: 40 }
+            };
+
+            Plotly.newPlot('riskDistributionChart', data, layout, { displayModeBar: false });
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            renderStats();
+            renderUsers();
+            renderRiskDistributionChart();
+        });
+    </script>
+</body>
+</html>
+
