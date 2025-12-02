@@ -1186,6 +1186,61 @@
             background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #d4af37 100%);
             border-radius: 24px 24px 0 0;
         }
+        
+        .speed-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+            border-radius: 16px;
+            border: 1.5px solid #e2e8f0;
+        }
+        
+        .speed-selector label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #64748b;
+            letter-spacing: 0.3px;
+        }
+        
+        .speed-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .speed-btn {
+            padding: 8px 16px;
+            background: #ffffff;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            min-width: 50px;
+            text-align: center;
+        }
+        
+        .speed-btn:hover {
+            background: #f1f5f9;
+            border-color: #cbd5e1;
+            transform: translateY(-2px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+        
+        .speed-btn.active {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: #ffffff;
+            border-color: #3b82f6;
+            box-shadow: 
+                0 4px 12px rgba(59, 130, 246, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
 
         .control-btn {
             padding: 14px 28px;
@@ -1396,6 +1451,16 @@
             </div>
 
             <div class="control-panel">
+                <div class="speed-selector">
+                    <label>⚡ Playback Speed:</label>
+                    <div class="speed-buttons">
+                        <button class="speed-btn" onclick="setPlaybackSpeed(0.5)" data-speed="0.5">0.5x</button>
+                        <button class="speed-btn active" onclick="setPlaybackSpeed(1)" data-speed="1">1x</button>
+                        <button class="speed-btn" onclick="setPlaybackSpeed(1.5)" data-speed="1.5">1.5x</button>
+                        <button class="speed-btn" onclick="setPlaybackSpeed(2)" data-speed="2">2x</button>
+                        <button class="speed-btn" onclick="setPlaybackSpeed(3)" data-speed="3">3x</button>
+                    </div>
+                </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="progressFill"></div>
                 </div>
@@ -1423,6 +1488,7 @@
         let isPlaying = false;
         let playInterval = null;
         let currentUserJourney = [];
+        let playbackSpeed = 1.0; // Default playback speed (1x)
         let intentMetrics = {
             explorationScore: 0,
             executionScore: 0,
@@ -2278,7 +2344,7 @@
             });
         }
         
-        // Show highlight box for interactive element
+        // Show highlight box for component related to current event
         function showMobileClick(event, eventIndex) {
             const phoneContent = document.getElementById('phoneContent');
             
@@ -2294,58 +2360,151 @@
             
             // Wait a bit for DOM to update
             setTimeout(() => {
-                // Get clickable elements in mobile app
-                const clickableElements = phoneContent.querySelectorAll('button, .card, .menu-item, .nav-item, .voucher-card, .task-item, .action-btn, .quick-action, .home-card, .profile-item, .btn-primary, .floating-btn, a, .task-card, .voucher-item');
+                // Get all interactive elements in mobile app
+                const allElements = phoneContent.querySelectorAll('*');
+                const clickableElements = phoneContent.querySelectorAll('button, .card, .menu-item, .nav-item, .voucher-card, .task-item, .action-btn, .quick-action, .home-card, .profile-item, .btn-primary, .floating-btn, a, .task-card, .voucher-item, .app-header, .credit-card, .new-user-zone, .quick-actions, .tasks-section, .bottom-nav, .payment-amount, .voucher-list, .qr-scanner, .profile-header, .settings-item');
                 
-                if (clickableElements.length > 0) {
-                    // Calculate position based on event index and event type
-                    let targetElement = null;
+                if (clickableElements.length > 0 || allElements.length > 0) {
+                    // Get current event
                     const currentEvent = currentUserJourney[eventIndex];
                     const eventName = currentEvent ? currentEvent.event_name.toLowerCase() : '';
                     
-                    // Try to find element matching the event
-                    for (let elem of clickableElements) {
+                    let targetElement = null;
+                    let matchScore = 0;
+                    
+                    // Enhanced matching logic - check all elements
+                    for (let elem of allElements) {
                         const elemText = elem.textContent.toLowerCase();
                         const elemClasses = elem.className.toLowerCase();
+                        const elemId = elem.id ? elem.id.toLowerCase() : '';
+                        let score = 0;
                         
-                        if (eventName.includes('home') && (elemText.includes('home') || elemClasses.includes('home'))) {
+                        // Home page related
+                        if (eventName.includes('home') || eventName.includes('homepage')) {
+                            if (elemClasses.includes('home') || elemText.includes('home') || elemId.includes('home') || 
+                                elemClasses.includes('app-header') || elemClasses.includes('credit-card') ||
+                                elemClasses.includes('new-user-zone') || elemClasses.includes('quick-actions') ||
+                                elemClasses.includes('tasks-section')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Payment related
+                        if (eventName.includes('payment') || eventName.includes('pay') || eventName.includes('checkout')) {
+                            if (elemClasses.includes('payment') || elemText.includes('pay') || elemText.includes('checkout') ||
+                                elemClasses.includes('btn-primary') || elemClasses.includes('payment-amount') ||
+                                elemId.includes('payment') || elemId.includes('checkout')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Voucher related
+                        if (eventName.includes('voucher')) {
+                            if (elemClasses.includes('voucher') || elemText.includes('voucher') ||
+                                elemClasses.includes('voucher-card') || elemClasses.includes('voucher-list') ||
+                                elemId.includes('voucher')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // QR/Scan related
+                        if (eventName.includes('qr') || eventName.includes('scan') || eventName.includes('camera')) {
+                            if (elemClasses.includes('qr') || elemText.includes('scan') || elemText.includes('qr') ||
+                                elemText.includes('camera') || elemClasses.includes('qr-scanner') ||
+                                elemId.includes('qr') || elemId.includes('scan')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Profile related
+                        if (eventName.includes('profile')) {
+                            if (elemClasses.includes('profile') || elemText.includes('profile') ||
+                                elemClasses.includes('profile-header') || elemClasses.includes('profile-item') ||
+                                elemClasses.includes('settings-item') || elemId.includes('profile')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Task related
+                        if (eventName.includes('task')) {
+                            if (elemClasses.includes('task') || elemText.includes('task') ||
+                                elemClasses.includes('task-item') || elemClasses.includes('task-card') ||
+                                elemClasses.includes('tasks-section') || elemId.includes('task')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Activation related
+                        if (eventName.includes('activate') || eventName.includes('activation')) {
+                            if (elemText.includes('activate') || elemClasses.includes('activate') ||
+                                elemId.includes('activate')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Face verification related
+                        if (eventName.includes('face') || eventName.includes('verification') || eventName.includes('verify')) {
+                            if (elemText.includes('face') || elemText.includes('verify') || elemText.includes('verification') ||
+                                elemClasses.includes('face') || elemClasses.includes('verify') ||
+                                elemId.includes('face') || elemId.includes('verify')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Navigation related
+                        if (eventName.includes('nav') || eventName.includes('navigation') || eventName.includes('bottom')) {
+                            if (elemClasses.includes('nav') || elemClasses.includes('bottom-nav') ||
+                                elemClasses.includes('nav-item') || elemId.includes('nav')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Floating button related
+                        if (eventName.includes('floating') || eventName.includes('float')) {
+                            if (elemClasses.includes('floating') || elemClasses.includes('floating-btn') ||
+                                elemId.includes('floating')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // Popup related
+                        if (eventName.includes('popup') || eventName.includes('fullpopup')) {
+                            // Look for popup-like elements
+                            if (elemClasses.includes('popup') || elemClasses.includes('modal') ||
+                                elemClasses.includes('dialog') || elemId.includes('popup')) {
+                                score = 10;
+                            }
+                        }
+                        
+                        // If this element has a higher score, use it
+                        if (score > matchScore) {
+                            matchScore = score;
                             targetElement = elem;
-                            break;
-                        } else if ((eventName.includes('payment') || eventName.includes('pay') || eventName.includes('checkout'))) {
-                            if (elemText.includes('pay') || elemClasses.includes('btn-primary') || elemText.includes('checkout') || elemClasses.includes('payment')) {
-                                targetElement = elem;
-                                break;
+                        }
+                    }
+                    
+                    // Fallback: try to find by text content similarity
+                    if (!targetElement && eventName) {
+                        for (let elem of clickableElements) {
+                            const elemText = elem.textContent.toLowerCase();
+                            const keywords = eventName.split(/[_\s]+/);
+                            let matchCount = 0;
+                            
+                            for (let keyword of keywords) {
+                                if (keyword.length > 2 && elemText.includes(keyword)) {
+                                    matchCount++;
+                                }
                             }
-                        } else if (eventName.includes('voucher')) {
-                            if (elemClasses.includes('voucher') || elemText.includes('voucher')) {
-                                targetElement = elem;
-                                break;
-                            }
-                        } else if (eventName.includes('qr') || eventName.includes('scan')) {
-                            if (elemText.includes('scan') || elemText.includes('qr') || elemText.includes('camera') || elemClasses.includes('qr')) {
-                                targetElement = elem;
-                                break;
-                            }
-                        } else if (eventName.includes('profile')) {
-                            if (elemClasses.includes('profile') || elemText.includes('profile')) {
-                                targetElement = elem;
-                                break;
-                            }
-                        } else if (eventName.includes('task')) {
-                            if (elemClasses.includes('task') || elemText.includes('task')) {
-                                targetElement = elem;
-                                break;
-                            }
-                        } else if (eventName.includes('activate') || eventName.includes('activation')) {
-                            if (elemText.includes('activate') || elemClasses.includes('activate')) {
+                            
+                            if (matchCount > 0 && matchCount > keywords.length * 0.3) {
                                 targetElement = elem;
                                 break;
                             }
                         }
                     }
                     
-                    // Fallback to index-based selection
-                    if (!targetElement) {
+                    // Final fallback: use index-based selection
+                    if (!targetElement && clickableElements.length > 0) {
                         const elementIndex = Math.min(eventIndex % clickableElements.length, clickableElements.length - 1);
                         targetElement = clickableElements[elementIndex];
                     }
@@ -2353,6 +2512,11 @@
                     if (targetElement) {
                         const rect = targetElement.getBoundingClientRect();
                         const phoneRect = phoneContent.getBoundingClientRect();
+                        
+                        // Skip if element is not visible
+                        if (rect.width === 0 || rect.height === 0) {
+                            return;
+                        }
                         
                         // Calculate position and size relative to phone content
                         const left = rect.left - phoneRect.left - 4;
@@ -2370,7 +2534,7 @@
                         
                         phoneContent.appendChild(highlight);
                         
-                        // Add click animation
+                        // Add click animation after a brief delay
                         setTimeout(() => {
                             highlight.classList.add('clicking');
                             setTimeout(() => {
@@ -2378,19 +2542,21 @@
                             }, 400);
                         }, 200);
                         
-                        // Remove highlight after animation
+                        // Keep highlight visible longer (3 seconds) for better visibility
                         setTimeout(() => {
                             if (highlight.parentNode) {
                                 highlight.style.opacity = '0';
-                                highlight.style.transition = 'opacity 0.3s ease';
+                                highlight.style.transition = 'opacity 0.5s ease';
                                 setTimeout(() => {
-                                    highlight.remove();
-                                }, 300);
+                                    if (highlight.parentNode) {
+                                        highlight.remove();
+                                    }
+                                }, 500);
                             }
-                        }, 2000);
+                        }, 3000);
                     }
                 }
-            }, 200);
+            }, 300);
         }
         
         // Track mouse movement in timeline for hover preview
@@ -2423,6 +2589,27 @@
             });
         }
 
+        function setPlaybackSpeed(speed) {
+            playbackSpeed = speed;
+            
+            // Update active button
+            document.querySelectorAll('.speed-btn').forEach(btn => {
+                if (parseFloat(btn.getAttribute('data-speed')) === speed) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+            
+            // If currently playing, restart with new speed
+            if (isPlaying) {
+                pauseDemo();
+                setTimeout(() => {
+                    startDemo();
+                }, 100);
+            }
+        }
+        
         function startDemo() {
             if (isPlaying) return;
             
@@ -2446,6 +2633,9 @@
                             delay = Math.max(500, Math.min(timeDiff, 5000)); // Clamp between 0.5s and 5s
                         }
                     }
+                    
+                    // Apply playback speed
+                    delay = delay / playbackSpeed;
                     
                     playInterval = setTimeout(playNextEvent, delay);
                 } else {
@@ -2489,10 +2679,11 @@
                 const eventName = currentEvent.event_name;
                 renderMobileApp(null, eventName);
                 
-                // Show click effect for this event with longer delay to ensure DOM is ready
+                // Show highlight box for component related to this event
+                // Use longer delay to ensure DOM is fully rendered
                 setTimeout(() => {
                     showMobileClick(null, currentEventIndex);
-                }, 400);
+                }, 500);
             }
 
             // Update intent metrics
@@ -2509,11 +2700,8 @@
                 initTimelineHoverTracking();
             }, 100);
 
-            // Scroll timeline to active item
-            const activeItem = document.querySelector('.timeline-item.active');
-            if (activeItem) {
-                activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
+            // Note: Removed auto-scroll to timeline to allow users to view other sections
+            // Users can manually scroll to timeline if needed
         }
 
         // Calculate risk score dynamically based on current journey progress
@@ -2690,6 +2878,9 @@
             setTimeout(() => {
                 initTimelineHoverTracking();
             }, 500);
+            
+            // Initialize playback speed to 1x
+            setPlaybackSpeed(1);
         });
     </script>
 </body>
