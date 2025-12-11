@@ -9,20 +9,8 @@
       "destination": "/index.html"
     },
     {
-      "source": "/report",
-      "destination": "/user_intent_clustering_report.html"
-    },
-    {
-      "source": "/visualizations",
-      "destination": "/visualizations.html"
-    },
-    {
       "source": "/demo",
       "destination": "/intent_demo.html"
-    },
-    {
-      "source": "/risk",
-      "destination": "/risk_detection_demo.html"
     }
   ],
   "headers": [

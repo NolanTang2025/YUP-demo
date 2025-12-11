@@ -1624,8 +1624,26 @@
             
             console.log('Initializing demo with users:', userIds);
             
+            // Check for user parameter in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const requestedUserId = urlParams.get('user');
+            
             // Generate user selector buttons
             renderUserSelector(userIds);
+            
+            // If a user ID is specified in URL, find and select that user
+            if (requestedUserId) {
+                const requestedIndex = userIds.indexOf(requestedUserId);
+                if (requestedIndex !== -1) {
+                    currentUserIndex = requestedIndex;
+                    console.log(`User specified in URL: ${requestedUserId}, index: ${requestedIndex}`);
+                    // Use switchUser to properly initialize the selected user
+                    switchUser(requestedIndex);
+                    return; // switchUser will handle the rest
+                } else {
+                    console.warn(`User ${requestedUserId} not found in userJourneys`);
+                }
+            }
             
             if (currentUserIndex >= userIds.length) {
                 currentUserIndex = 0;
