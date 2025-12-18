@@ -15,6 +15,7 @@ import pickle
 import time
 import random
 import re
+import requests
 warnings.filterwarnings('ignore')
 
 # Google Gemini for embeddings
@@ -26,7 +27,7 @@ except ImportError:
     raise ImportError("google-generativeai is required. Install with: pip install google-generativeai")
 
 # Machine Learning
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, normalize
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
@@ -45,10 +46,28 @@ class UserIntentAnalyzer:
             data_path: Path to data file (CSV)
             gemini_api_key: Google Gemini API key (or set GEMINI_API_KEY environment variable)
         """
-        # Initialize Gemini
-        api_key = gemini_api_key or os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise ValueError("Gemini API key is required. Set GEMINI_API_KEY environment variable or pass gemini_api_key parameter.")
+        # Initialize Gemini - ALWAYS prioritize environment variable from export command
+        # Priority: 1) GEMINI_API_KEY (uppercase), 2) gemini_api_key (lowercase), 3) passed parameter
+        env_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('gemini_api_key')
+        
+        # Always use environment variable if available, ignore passed parameter
+        if env_api_key:
+            api_key = env_api_key
+            print(f"   🔑 Using API key from environment variable (GEMINI_API_KEY or gemini_api_key)")
+            print(f"   🔑 API key starts with: {api_key[:10]}...")
+        elif gemini_api_key:
+            api_key = gemini_api_key
+            print(f"   🔑 Using API key from function parameter (environment variable not found)")
+        else:
+            raise ValueError("Gemini API key is required. Set GEMINI_API_KEY environment variable with: export GEMINI_API_KEY='your-api-key'")
+        
+        # Check for proxy settings
+        http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+        https_proxy = os.getenv('HTTPS_PROXY') or os.getenv('https_proxy')
+        if http_proxy or https_proxy:
+            print(f"   🌐 Proxy detected: HTTP_PROXY={http_proxy}, HTTPS_PROXY={https_proxy}")
+            # Note: google-generativeai library may need proxy configuration
+            # You may need to set proxy at system level or use requests library with proxy
         
         genai.configure(api_key=api_key)
         self.gemini_api_key = api_key
@@ -67,8 +86,78 @@ class UserIntentAnalyzer:
                     continue
             if self.df is None or self.df.empty:
                 raise ValueError(f"Could not read {data_path} with any encoding")
+        elif data_path.endswith('.json'):
+            try:
+                # Read raw JSON
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    json_data = json.load(f)
+                
+                # Store raw JSON data for later use in embedding extraction
+                self.raw_json_data = json_data
+                
+                # Transform to DataFrame - keep full session data
+                rows = []
+                if isinstance(json_data, dict):
+                    for user_id, user_data in json_data.items():
+                        # Handle case where user_id might not be the key but inside
+                        real_user_id = user_data.get('user_uuid', user_id)
+                        
+                        # Extract sessions
+                        sessions = user_data.get('sessions', [])
+                        
+                        for session_idx, session in enumerate(sessions):
+                            behaviors = session.get('key_behaviors', [])
+                            # Use session timestamp or fallback
+                            base_time = session.get('timestamp')
+                            
+                            # Try to find payment time in behaviors
+                            trx_time = None
+                            
+                            for behavior in behaviors:
+                                # "show_home_floaticon_3467 (额外信息: ...)"
+                                event_name = behavior.split(' (')[0].strip()
+                                
+                                # Check for payment time in behavior string
+                                if "首次支付时间" in behavior:
+                                    try:
+                                        # Expected format: "首次支付时间: 2025-11-16 11:14:00"
+                                        # Remove any trailing chars like )
+                                        time_str = behavior.split(":", 1)[1].strip().split(')')[0].strip()
+                                        trx_time = time_str
+                                    except:
+                                        pass
+                            
+                            # Store full session data as JSON string for embedding extraction
+                            row = {
+                                'user_uuid': real_user_id,
+                                'session_index': session_idx,
+                                'event_time': base_time, 
+                                'fir_trx_time': trx_time,
+                                # Store full session as JSON string
+                                'session_data': json.dumps(session, ensure_ascii=False),
+                                # Also keep key fields for backward compatibility
+                                'intent': session.get('intent'),
+                                'intent_category': session.get('intent_category'),
+                                'reasoning': session.get('reasoning'),
+                                # Store key behaviors as list
+                                'key_behaviors': json.dumps(session.get('key_behaviors', []), ensure_ascii=False)
+                            }
+                            rows.append(row)
+                                
+                if not rows:
+                     # Fallback to standard loading if no structured sessions found
+                     self.df = pd.read_json(data_path)
+                else:
+                     self.df = pd.DataFrame(rows)
+                     
+                # Ensure user_uuid column exists
+                if 'user_uuid' not in self.df.columns and not self.df.empty:
+                     self.df['user_uuid'] = self.df.index
+                     
+            except Exception as e:
+                raise ValueError(f"Could not read/parse JSON file {data_path}: {e}")
         else:
-            raise ValueError("Only CSV files are supported")
+            raise ValueError("Only CSV and JSON files are supported")
         
         # Handle time columns
         if 'event_time' in self.df.columns:
@@ -91,6 +180,10 @@ class UserIntentAnalyzer:
         self.data_path = data_path
         self.cache_dir = 'cache'
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Initialize raw_json_data if not already set (for CSV files, this will be None)
+        if not hasattr(self, 'raw_json_data'):
+            self.raw_json_data = None
         
         # User-level embedding cache (key: user_id, value: embedding)
         self.user_embedding_cache = {}
@@ -162,6 +255,23 @@ class UserIntentAnalyzer:
         embedding = None
         for attempt in range(max_retries):
             try:
+                # Try to use proxy if available
+                http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+                https_proxy = os.getenv('HTTPS_PROXY') or os.getenv('https_proxy')
+                
+                # Configure genai with proxy if available
+                # Note: google-generativeai may not directly support proxy,
+                # but we can set it at the system level via environment variables
+                if http_proxy or https_proxy:
+                    # Set proxy for requests library (used by genai internally)
+                    proxies = {}
+                    if http_proxy:
+                        proxies['http'] = http_proxy
+                    if https_proxy:
+                        proxies['https'] = https_proxy
+                    # Note: This may not work directly with genai library
+                    # You may need to configure proxy at system level
+                
                 result = genai.embed_content(
                     model="models/embedding-001",
                     content=text,
@@ -171,6 +281,22 @@ class UserIntentAnalyzer:
                 break  # Success, exit retry loop
             except Exception as e:
                 error_msg = str(e)
+                
+                # Check for location restriction error
+                is_location_error = 'location' in error_msg.lower() or 'not supported' in error_msg.lower() or '400' in error_msg
+                
+                if is_location_error and 'location' in error_msg.lower():
+                    if attempt == 0:  # Only print once
+                        print(f"\n   ❌ 地理位置限制错误: {error_msg[:100]}")
+                        print(f"   💡 解决方案:")
+                        print(f"      1. 使用 VPN 连接到支持 Gemini API 的地区")
+                        print(f"      2. 设置系统代理:")
+                        print(f"         export HTTP_PROXY='http://proxy:port'")
+                        print(f"         export HTTPS_PROXY='http://proxy:port'")
+                        print(f"      3. 使用支持你所在地区的其他 embedding 服务")
+                        print(f"   ⚠️  由于地理位置限制，无法继续处理。请使用 VPN 或代理后重试。\n")
+                    return None
+                
                 # Check if it's a retryable error (500, 503, 429, etc.)
                 is_retryable = any(code in error_msg for code in ['500', '503', '429', 'rate limit', 'quota', 'internal error'])
                 
@@ -194,8 +320,161 @@ class UserIntentAnalyzer:
         
         return embedding
     
+    def _extract_field_texts_from_sessions(self, user_data):
+        """Extract text for different fields from user sessions for separate embedding
+        
+        Returns:
+            dict: Dictionary with field names as keys and text content as values
+        """
+        field_texts = {
+            'intent': [],
+            'intent_category': [],
+            'explored_feature': [],
+            'exploration_purpose': [],
+            'first_transaction_connection': [],
+            'trust_indicators': [],
+            'concerns': [],
+            'psychological_reference': [],
+            'key_behaviors': [],
+            'reasoning': []
+        }
+        
+        # Check if we have session_data column (from JSON loading)
+        if 'session_data' in user_data.columns:
+            for _, row in user_data.iterrows():
+                try:
+                    session = json.loads(row['session_data'])
+                    
+                    # Extract each field
+                    if session.get('intent'):
+                        field_texts['intent'].append(session['intent'])
+                    
+                    if session.get('intent_category'):
+                        field_texts['intent_category'].append(session['intent_category'])
+                    
+                    if session.get('explored_feature'):
+                        field_texts['explored_feature'].append(session['explored_feature'])
+                    
+                    if session.get('exploration_purpose'):
+                        field_texts['exploration_purpose'].append(session['exploration_purpose'])
+                    
+                    if session.get('first_transaction_connection'):
+                        field_texts['first_transaction_connection'].append(session['first_transaction_connection'])
+                    
+                    # Trust indicators (list)
+                    if session.get('trust_indicators'):
+                        field_texts['trust_indicators'].extend(session['trust_indicators'])
+                    
+                    # Concerns (list of objects)
+                    if session.get('concerns'):
+                        for concern in session['concerns']:
+                            concern_text = f"{concern.get('concern_type', '')}: {concern.get('concern_description', '')}"
+                            if concern.get('concern_severity'):
+                                concern_text += f" (Severity: {concern['concern_severity']})"
+                            field_texts['concerns'].append(concern_text)
+                    
+                    # Psychological reference (object)
+                    if session.get('psychological_reference'):
+                        psych = session['psychological_reference']
+                        psych_text = ""
+                        if psych.get('expected_value'):
+                            psych_text += f"Expected: {psych['expected_value']}. "
+                        if psych.get('perceived_value'):
+                            psych_text += f"Perceived: {psych['perceived_value']}. "
+                        if psych.get('gap_analysis'):
+                            psych_text += f"Gap: {psych['gap_analysis']}"
+                        if psych_text:
+                            field_texts['psychological_reference'].append(psych_text.strip())
+                    
+                    # Key behaviors (list)
+                    if session.get('key_behaviors'):
+                        field_texts['key_behaviors'].extend(session['key_behaviors'])
+                    
+                    if session.get('reasoning'):
+                        field_texts['reasoning'].append(session['reasoning'])
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    continue
+        
+        # Convert lists to text strings
+        result = {}
+        for field, values in field_texts.items():
+            if values:
+                # Join multiple values with separator
+                result[field] = " | ".join([str(v) for v in values if v])
+            else:
+                result[field] = ""
+        
+        return result
+    
     def _create_user_behavior_text(self, user_data):
         """Create a text representation of user behavior for embedding"""
+        
+        # Check if we have pre-analyzed intent data columns (from JSON load)
+        if 'intent' in user_data.columns:
+            text_parts = []
+            if 'user_uuid' in user_data.columns and not user_data.empty:
+                 text_parts.append(f"User ID: {user_data['user_uuid'].iloc[0]}")
+            
+            # Aggregate stats
+            unique_categories = user_data['intent_category'].unique() if 'intent_category' in user_data.columns else []
+            unique_categories = [c for c in unique_categories if pd.notna(c)]
+            text_parts.append(f"Primary Interest Categories: {', '.join(unique_categories)}")
+            
+            # Group by session index to extract unique intents
+            if 'session_index' in user_data.columns:
+                # Sort by time/index
+                if 'event_time' in user_data.columns:
+                    user_data = user_data.sort_values(['session_index', 'event_time'])
+                else:
+                    user_data = user_data.sort_values('session_index')
+                    
+                sessions = user_data.groupby('session_index', sort=False)
+                
+                # Collect all intents and behaviors for summary
+                all_intents = []
+                all_behaviors = set()
+                
+                session_texts = []
+                for idx, session_df in sessions:
+                    if session_df.empty: continue
+                    first_row = session_df.iloc[0]
+                    
+                    s_text = f"Session {idx+1}:"
+                    intent_str = ""
+                    if pd.notna(first_row.get('intent')):
+                        intent_str = first_row['intent']
+                        all_intents.append(intent_str)
+                        s_text += f" {intent_str}"
+                    
+                    if pd.notna(first_row.get('intent_category')):
+                         s_text += f" ({first_row['intent_category']})"
+                         
+                    # Add unique behaviors for this session
+                    events = session_df['event_name'].tolist()
+                    simplified = []
+                    for e in events:
+                        if isinstance(e, str):
+                            clean_e = e.replace('show_', '').replace('click_', '').replace('_', ' ').lower()
+                            simplified.append(clean_e)
+                            all_behaviors.add(clean_e)
+                    
+                    # Only add behaviors if they are key ones (clicking, paying) or if list is short
+                    key_acts = [b for b in simplified if 'pay' in b or 'click' in b or 'submit' in b]
+                    if key_acts:
+                         s_text += f". Actions: {', '.join(set(key_acts))}"
+                    
+                    session_texts.append(s_text)
+                
+                # Add summary first (Gemini pays attention to start)
+                text_parts.append(f"User Summary: This user has {len(sessions)} sessions. Main focus areas: {', '.join(unique_categories)}.")
+                text_parts.append("Detailed Journey:")
+                text_parts.extend(session_texts)
+            
+            if text_parts:
+                return "\n".join(text_parts)
+
+        # Fallback to original logic if no intent columns or parsing failed
         user_data = user_data.sort_values('event_time')
         
         text_parts = []
@@ -229,7 +508,7 @@ class UserIntentAnalyzer:
                     text_parts.append(f"Account approved at: {approved_time}")
         
         # Add event sequence
-        events = user_data['event_name'].tolist()
+        events = self._extract_events_from_user_data(user_data)
         simplified_events = []
         for event in events:
             event_clean = event.replace('show_', '').replace('click_', '')
@@ -340,6 +619,7 @@ class UserIntentAnalyzer:
     
     def extract_embeddings(self, use_cache=True, force_regenerate=False):
         """Extract embeddings for all users using Gemini
+        Each field is embedded separately, then combined
         
         Args:
             use_cache: Whether to use cached embeddings if available
@@ -353,40 +633,153 @@ class UserIntentAnalyzer:
         
         # Generate new embeddings
         print("   🔄 Generating new embeddings (this may take a while)...")
+        print("   ⚙️  Using multi-field embedding approach: each field is embedded separately")
         print("   ⚙️  Using retry mechanism and rate limiting to handle API errors")
         embeddings_list = []
         failed_users = []
+        location_error_detected = False  # Track if location error occurs
         
         total_users = len(self.df['user_uuid'].unique())
         print(f"   Processing {total_users} users to extract embeddings...")
         
+        # Define fields to embed (in order of importance)
+        field_names = [
+            'intent',
+            'intent_category', 
+            'explored_feature',
+            'exploration_purpose',
+            'first_transaction_connection',
+            'trust_indicators',
+            'concerns',
+            'psychological_reference',
+            'key_behaviors',
+            'reasoning'
+        ]
+        
         for idx, user_id in enumerate(self.df['user_uuid'].unique()):
-            if (idx + 1) % 50 == 0:
+            # Early exit if location error detected
+            if location_error_detected:
+                print(f"\n   ⚠️  检测到地理位置限制错误，停止处理剩余用户")
+                print(f"   💡 请使用 VPN 或代理后重新运行脚本")
+                break
+            
+            if (idx + 1) % 10 == 0:
                 print(f"   Processed {idx + 1}/{total_users} users... (Success: {len(embeddings_list)}, Failed: {len(failed_users)})")
             
             user_data = self.df[self.df['user_uuid'] == user_id].copy()
             
-            # Create text representation
-            behavior_text = self._create_user_behavior_text(user_data)
+            # Extract field texts
+            field_texts = self._extract_field_texts_from_sessions(user_data)
             
-            # Get embedding with retry
-            embedding = self._get_gemini_embedding(behavior_text, max_retries=3, base_delay=2)
+            # If no field texts found, fallback to original method
+            if not any(field_texts.values()):
+                behavior_text = self._create_user_behavior_text(user_data)
+                embedding = self._get_gemini_embedding(behavior_text, max_retries=3, base_delay=2)
+                
+                if embedding is not None:
+                    has_trx = False
+                    if 'fir_trx_time' in user_data.columns:
+                        has_trx = pd.notna(user_data['fir_trx_time'].iloc[0])
+                    
+                    embedding_dict = {
+                        'user_uuid': user_id,
+                        'completed_transaction': 1 if has_trx else 0,
+                    }
+                    # Ensure all embedding values are valid (no NaN/None)
+                    for i, emb_val in enumerate(embedding):
+                        if isinstance(emb_val, (int, float)) and not np.isnan(emb_val):
+                            embedding_dict[f'embedding_dim_{i}'] = float(emb_val)
+                        else:
+                            embedding_dict[f'embedding_dim_{i}'] = 0.0
+                    embeddings_list.append(embedding_dict)
+                else:
+                    failed_users.append(user_id)
+                    print(f"   ⚠️  Failed to get embedding for user {user_id[:20]}... after retries, skipping")
+                
+                time.sleep(random.uniform(0.2, 0.5))
+                continue
             
-            if embedding is not None:
-                embedding_dict = {
-                    'user_uuid': user_id,
-                    'completed_transaction': 1 if pd.notna(user_data['fir_trx_time'].iloc[0]) else 0,
-                }
-                # Add all embedding dimensions
-                for i, emb_val in enumerate(embedding):
-                    embedding_dict[f'embedding_dim_{i}'] = emb_val
-                embeddings_list.append(embedding_dict)
+            # Get embeddings for each field separately
+            field_embeddings = {}
+            failed_fields = []
+            
+            for field_name in field_names:
+                # Early exit if location error detected
+                if location_error_detected:
+                    break
+                    
+                field_text = field_texts.get(field_name, "")
+                if field_text and field_text.strip():
+                    field_embedding = self._get_gemini_embedding(field_text, max_retries=1, base_delay=2)
+                    if field_embedding is not None:
+                        field_embeddings[field_name] = field_embedding
+                    else:
+                        failed_fields.append(field_name)
+                        # Check if location error occurred (error message would contain 'location')
+                        # We check this by looking at the last error in the embedding cache or by checking error pattern
+                        # For now, we'll check on next iteration or use a flag
+                    # Small delay between field embeddings
+                    time.sleep(random.uniform(0.1, 0.3))
+            
+            # Check if we should stop due to location error
+            # If all fields failed and it's likely a location error, mark it
+            if not field_embeddings and failed_fields:
+                # Try one more time with a simple test to confirm location error
+                test_embedding = self._get_gemini_embedding("test", max_retries=1, base_delay=0)
+                if test_embedding is None:
+                    # Likely location error, stop processing
+                    location_error_detected = True
+                    print(f"\n   ⚠️  确认地理位置限制，停止处理")
+                    break
+            
+            # Use embeddings if we have at least some fields successfully embedded
+            if field_embeddings:
+                # Get the dimension of embeddings (should be consistent, typically 768 for Gemini)
+                # Use the first successful embedding to determine dimension
+                first_embedding = next(iter(field_embeddings.values()))
+                embedding_dim = len(first_embedding) if first_embedding is not None else 768
+                
+                # Combine embeddings: concatenate all field embeddings in order
+                # For missing fields, use zero vector to maintain consistent dimensions
+                combined_embedding = []
+                for field_name in field_names:
+                    if field_name in field_embeddings:
+                        field_emb = field_embeddings[field_name]
+                        if field_emb is not None and len(field_emb) > 0:
+                            combined_embedding.extend(field_emb)
+                        else:
+                            # Use zero vector for failed embeddings
+                            combined_embedding.extend([0.0] * embedding_dim)
+                    else:
+                        # Field not present, use zero vector
+                        combined_embedding.extend([0.0] * embedding_dim)
+                
+                # Validate combined embedding (check for NaN or None)
+                if combined_embedding and all(isinstance(x, (int, float)) and not np.isnan(x) for x in combined_embedding):
+                    has_trx = False
+                    if 'fir_trx_time' in user_data.columns:
+                        has_trx = pd.notna(user_data['fir_trx_time'].iloc[0])
+                    
+                    embedding_dict = {
+                        'user_uuid': user_id,
+                        'completed_transaction': 1 if has_trx else 0,
+                    }
+                    # Add all embedding dimensions
+                    for i, emb_val in enumerate(combined_embedding):
+                        embedding_dict[f'embedding_dim_{i}'] = float(emb_val)  # Ensure float type
+                    embeddings_list.append(embedding_dict)
+                    
+                    # Log warning if some fields failed
+                    if failed_fields:
+                        print(f"   ⚠️  User {user_id[:20]}: some fields failed ({failed_fields}), using zero vectors for missing fields")
+                else:
+                    failed_users.append(user_id)
+                    print(f"   ⚠️  Failed to create valid embedding for user {user_id[:20]} (contains NaN/None)... skipping")
             else:
                 failed_users.append(user_id)
-                print(f"   ⚠️  Failed to get embedding for user {user_id[:20]}... after retries, skipping")
+                print(f"   ⚠️  Failed to get any field embeddings for user {user_id[:20]}... skipping")
             
-            # Add delay between requests to avoid rate limiting
-            # Random delay between 0.2-0.5 seconds to avoid synchronized requests
+            # Add delay between users to avoid rate limiting
             time.sleep(random.uniform(0.2, 0.5))
         
         if failed_users:
@@ -398,8 +791,17 @@ class UserIntentAnalyzer:
         
         self.embeddings_df = pd.DataFrame(embeddings_list)
         
+        # Final check: replace any remaining NaN values with 0
+        embedding_cols = [col for col in self.embeddings_df.columns if 'embedding_dim' in col]
+        if embedding_cols:
+            # Fill NaN values with 0
+            self.embeddings_df[embedding_cols] = self.embeddings_df[embedding_cols].fillna(0.0)
+            # Replace any inf values
+            self.embeddings_df[embedding_cols] = self.embeddings_df[embedding_cols].replace([np.inf, -np.inf], 0.0)
+        
         embedding_dims = len([c for c in self.embeddings_df.columns if 'embedding_dim' in c])
         print(f"   ✅ Extracted {embedding_dims} embedding dimensions for {len(self.embeddings_df)} users")
+        print(f"   📊 Multi-field embedding: combined {len(field_names)} fields per user")
         
         # Save to cache
         if use_cache:
@@ -423,16 +825,34 @@ class UserIntentAnalyzer:
         embedding_cols = [col for col in self.embeddings_df.columns if 'embedding_dim' in col]
         X = self.embeddings_df[embedding_cols].values
         
-        # Standardize embeddings
-        scaler = StandardScaler()
-        self.scaled_embeddings = scaler.fit_transform(X)
+        # Check for NaN or infinite values and handle them
+        if np.isnan(X).any() or np.isinf(X).any():
+            print(f"   ⚠️  Warning: Found NaN or Inf values in embeddings, replacing with 0")
+            X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # Ensure all values are finite
+        if not np.isfinite(X).all():
+            print(f"   ⚠️  Warning: Some non-finite values remain, replacing with 0")
+            X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # Normalize embeddings (better for Cosine similarity which is standard for embeddings)
+        # Gemini embeddings are often already normalized, but this ensures it
+        self.scaled_embeddings = normalize(X, norm='l2')
         
         # Determine optimal number of clusters
         if n_clusters is None:
-            print(f"   Testing cluster numbers from 2 to {max_k}...")
+            # For small datasets, adjust range
+            n_samples = len(self.embeddings_df)
+            min_k = min(3, n_samples - 1)
+            actual_max_k = min(max_k + 1, n_samples)
+            
+            if min_k >= actual_max_k:
+                 min_k = 2 # Fallback
+            
+            print(f"   Testing cluster numbers from {min_k} to {actual_max_k-1}...")
             silhouette_scores = []
             inertias = []
-            K_range = range(2, min(max_k + 1, len(self.embeddings_df)))
+            K_range = range(min_k, actual_max_k)
             
             for k in K_range:
                 kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
@@ -447,10 +867,22 @@ class UserIntentAnalyzer:
                     silhouette_scores.append(-1)
                     inertias.append(kmeans.inertia_)
             
-            if len(silhouette_scores) > 0 and max(silhouette_scores) > 0:
+            if len(silhouette_scores) > 0:
+                # Find local maxima or just best score
+                # Bias towards more clusters if scores are close?
                 best_k_idx = np.argmax(silhouette_scores)
                 best_k = list(K_range)[best_k_idx]
-                print(f"   ✅ Optimal cluster number: {best_k} (silhouette_score: {silhouette_scores[best_k_idx]:.3f})")
+                
+                # Heuristic: if best_k is 2 but 3/4 are very close (within 10%), pick higher
+                if best_k == 2 and len(silhouette_scores) > 1:
+                     score_2 = silhouette_scores[0]
+                     for i, score in enumerate(silhouette_scores[1:], 1):
+                         k_val = list(K_range)[i]
+                         if score >= score_2 * 0.9: # Within 10%
+                             print(f"   👉 Preferring k={k_val} ({score:.3f}) over k=2 ({score_2:.3f}) for granularity")
+                             best_k = k_val
+                
+                print(f"   ✅ Optimal cluster number: {best_k} (silhouette_score: {silhouette_scores[list(K_range).index(best_k)]:.3f})")
             else:
                 best_k = 2
                 print(f"   ⚠️  Using default: {best_k} clusters")
@@ -466,111 +898,482 @@ class UserIntentAnalyzer:
         # Add cluster labels to dataframe
         self.embeddings_df['cluster'] = self.cluster_labels
         
-        # Generate cluster names based on transaction completion rate
+        # Generate cluster names based on comprehensive business characteristics
         cluster_names = {}
+        existing_labels = []  # Track existing labels to ensure uniqueness
+        
         for cluster_id in range(n_clusters):
             cluster_data = self.embeddings_df[self.embeddings_df['cluster'] == cluster_id]
+            cluster_uuids = cluster_data['user_uuid'].unique()
+            cluster_rows = self.df[self.df['user_uuid'].isin(cluster_uuids)]
+            
             completion_rate = cluster_data['completed_transaction'].mean()
             
-            if completion_rate > 0.7:
-                name = "High Conversion Intent"
-            elif completion_rate > 0.3:
-                name = "Medium Conversion Intent"
-            else:
-                name = "Exploration Intent"
+            # Calculate business characteristics
+            characteristics = self._analyze_cluster_characteristics(cluster_data, cluster_rows)
+            
+            # Generate descriptive label based on multiple dimensions
+            # Pass existing labels to ensure uniqueness
+            name = self._generate_cluster_label(completion_rate, characteristics, existing_labels, cluster_id)
+            
+            # Ensure uniqueness - if duplicate, add distinguishing features
+            original_name = name
+            attempt = 0
+            while name in existing_labels and attempt < 3:
+                attempt += 1
+                # Add more distinguishing features
+                name = self._generate_cluster_label(completion_rate, characteristics, existing_labels, cluster_id, force_unique=True, attempt=attempt)
+            
+            # If still duplicate, add cluster ID or additional suffix
+            if name in existing_labels:
+                # Add distinguishing suffix based on unique characteristics
+                if characteristics['avg_sessions'] > 0:
+                    if characteristics['avg_sessions'] >= 3:
+                        name = f"{original_name}-MultiSession"
+                    else:
+                        name = f"{original_name}-SingleSession"
+                elif characteristics['behavior_diversity'] > 0:
+                    if characteristics['behavior_diversity'] >= 15:
+                        name = f"{original_name}-Diverse"
+                    else:
+                        name = f"{original_name}-Focused"
+                else:
+                    name = f"{original_name}-Cluster{cluster_id}"
             
             cluster_names[cluster_id] = name
+            existing_labels.append(name)
         
         self.embeddings_df['cluster_label'] = self.embeddings_df['cluster'].map(cluster_names)
         
-        # Perform sub-clustering within each main cluster
-        print("\n   Performing sub-clustering within each main cluster...")
-        self.embeddings_df['sub_cluster'] = -1
-        self.sub_cluster_labels = {}
-        
-        for cluster_id in range(n_clusters):
-            cluster_mask = self.embeddings_df['cluster'] == cluster_id
-            cluster_data = self.embeddings_df[cluster_mask]
-            
-            if len(cluster_data) < 4:  # Need at least 4 users for sub-clustering
-                self.embeddings_df.loc[cluster_mask, 'sub_cluster'] = 0
-                continue
-            
-            # Get embeddings for this cluster
-            embedding_cols = [col for col in self.embeddings_df.columns if 'embedding_dim' in col]
-            cluster_embeddings = cluster_data[embedding_cols].values
-            cluster_scaled = scaler.transform(cluster_embeddings)
-            
-            # Determine optimal number of sub-clusters (2-4, or max half of cluster size)
-            max_sub_k = min(4, max(2, len(cluster_data) // 2))
-            sub_k_range = range(2, max_sub_k + 1)
-            
-            if len(sub_k_range) > 0:
-                sub_silhouette_scores = []
-                for sub_k in sub_k_range:
-                    sub_kmeans = KMeans(n_clusters=sub_k, random_state=42, n_init=10)
-                    sub_labels = sub_kmeans.fit_predict(cluster_scaled)
-                    
-                    if len(set(sub_labels)) > 1:
-                        sub_sil_score = silhouette_score(cluster_scaled, sub_labels)
-                        sub_silhouette_scores.append(sub_sil_score)
-                    else:
-                        sub_silhouette_scores.append(-1)
-                
-                if len(sub_silhouette_scores) > 0 and max(sub_silhouette_scores) > 0:
-                    best_sub_k_idx = np.argmax(sub_silhouette_scores)
-                    best_sub_k = list(sub_k_range)[best_sub_k_idx]
-                else:
-                    best_sub_k = 2
-            else:
-                best_sub_k = 2
-            
-            # Perform sub-clustering
-            sub_kmeans = KMeans(n_clusters=best_sub_k, random_state=42, n_init=10)
-            sub_labels = sub_kmeans.fit_predict(cluster_scaled)
-            
-            # Generate sub-cluster names based on characteristics
-            sub_cluster_names = {}
-            for sub_id in range(best_sub_k):
-                sub_mask = sub_labels == sub_id
-                sub_data = cluster_data.iloc[sub_mask]
-                
-                # Analyze sub-cluster characteristics
-                sub_completion = sub_data['completed_transaction'].mean()
-                sub_size = len(sub_data)
-                
-                # Generate descriptive name
-                if sub_completion > 0.8:
-                    sub_name = f"Highly Active"
-                elif sub_completion > 0.5:
-                    sub_name = f"Moderately Active"
-                elif sub_completion > 0.2:
-                    sub_name = f"Exploring"
-                else:
-                    sub_name = f"Browsing"
-                
-                sub_cluster_names[sub_id] = sub_name
-            
-            # Store sub-cluster labels with main cluster prefix
-            for idx, sub_label in enumerate(sub_labels):
-                original_idx = cluster_data.index[idx]
-                self.embeddings_df.loc[original_idx, 'sub_cluster'] = sub_label
-                sub_cluster_key = f"{cluster_id}_{sub_label}"
-                if sub_cluster_key not in self.sub_cluster_labels:
-                    self.sub_cluster_labels[sub_cluster_key] = sub_cluster_names[sub_label]
-            
-            cluster_name = cluster_names[cluster_id]
-            print(f"      Cluster {cluster_id} ({cluster_name}): {best_sub_k} sub-clusters identified")
-        
-        # Create combined cluster label
-        def create_sub_cluster_label(row):
-            key = f"{row['cluster']}_{row['sub_cluster']}"
-            sub_name = self.sub_cluster_labels.get(key, 'Unknown')
-            return f"{row['cluster_label']} - {sub_name}"
-        
-        self.embeddings_df['sub_cluster_label'] = self.embeddings_df.apply(create_sub_cluster_label, axis=1)
-        
         return self.cluster_labels
+    
+    def _analyze_cluster_characteristics(self, cluster_data, cluster_rows):
+        """Analyze business characteristics of a cluster"""
+        characteristics = {
+            'completion_rate': cluster_data['completed_transaction'].mean(),
+            'intent_category': None,
+            'behavior_diversity': 0,
+            'activation_speed': None,
+            'explored_features': [],
+            'concern_types': [],
+            'trust_level': None,
+            'avg_sessions': 0,
+            'click_ratio': 0,  # Ratio of click vs show events
+            'exploration_depth': 0,  # Number of unique features explored
+            'confidence_score': 0,  # Average confidence score
+            'payment_related_actions': 0,  # Count of payment-related behaviors
+            'session_pattern': None,  # Single long session vs multiple short sessions
+            'key_behavior_types': []  # Types of key behaviors (payment, voucher, etc.)
+        }
+        
+        # 1. Intent category analysis
+        if not cluster_rows.empty and 'intent_category' in cluster_rows.columns:
+            counts = cluster_rows['intent_category'].value_counts(normalize=True)
+            if not counts.empty:
+                # Get top 2 categories
+                top_categories = counts.head(2)
+                characteristics['intent_category'] = top_categories.to_dict()
+        
+        # 2. Behavior diversity
+        if 'session_data' in cluster_rows.columns or 'key_behaviors' in cluster_rows.columns:
+            unique_events = set()
+            for user_id in cluster_data['user_uuid'].unique():
+                user_data = cluster_rows[cluster_rows['user_uuid'] == user_id]
+                events = self._extract_events_from_user_data(user_data)
+                unique_events.update(events)
+            characteristics['behavior_diversity'] = len(unique_events)
+        elif 'event_name' in cluster_rows.columns:
+            characteristics['behavior_diversity'] = cluster_rows['event_name'].nunique()
+        
+        # 3. Activation speed (time from approval to first action)
+        if 'approved_time' in cluster_rows.columns and 'event_time' in cluster_rows.columns:
+            cluster_rows['approved_time'] = pd.to_datetime(cluster_rows['approved_time'], errors='coerce')
+            cluster_rows['event_time'] = pd.to_datetime(cluster_rows['event_time'], errors='coerce')
+            activation_times = []
+            for user_id in cluster_data['user_uuid'].unique():
+                user_data = cluster_rows[cluster_rows['user_uuid'] == user_id]
+                if len(user_data) > 0 and pd.notna(user_data['approved_time'].iloc[0]):
+                    approved = user_data['approved_time'].iloc[0]
+                    first_event = user_data['event_time'].min()
+                    if pd.notna(first_event):
+                        hours = (first_event - approved).total_seconds() / 3600
+                        activation_times.append(hours)
+            if activation_times:
+                avg_activation = np.mean(activation_times)
+                if avg_activation < 1:
+                    characteristics['activation_speed'] = 'immediate'
+                elif avg_activation < 24:
+                    characteristics['activation_speed'] = 'fast'
+                elif avg_activation < 168:
+                    characteristics['activation_speed'] = 'moderate'
+                else:
+                    characteristics['activation_speed'] = 'slow'
+        
+        # 4. Explored features (from session_data)
+        if 'session_data' in cluster_rows.columns:
+            explored_features = []
+            for session_json in cluster_rows['session_data'].dropna():
+                try:
+                    session = json.loads(session_json)
+                    feature = session.get('explored_feature', '')
+                    if feature:
+                        explored_features.append(feature)
+                except:
+                    pass
+            if explored_features:
+                # Get most common features
+                feature_counts = pd.Series(explored_features).value_counts()
+                characteristics['explored_features'] = feature_counts.head(3).index.tolist()
+        
+        # 5. Concern types
+        if 'session_data' in cluster_rows.columns:
+            concern_types = []
+            for session_json in cluster_rows['session_data'].dropna():
+                try:
+                    session = json.loads(session_json)
+                    concerns = session.get('concerns', [])
+                    for concern in concerns:
+                        if isinstance(concern, dict):
+                            concern_type = concern.get('concern_type', '')
+                            if concern_type:
+                                concern_types.append(concern_type)
+                except:
+                    pass
+            if concern_types:
+                concern_counts = pd.Series(concern_types).value_counts()
+                characteristics['concern_types'] = concern_counts.head(3).index.tolist()
+        
+        # 6. Trust level (from baseline_trust in session_data)
+        if 'session_data' in cluster_rows.columns:
+            trust_scores = []
+            for session_json in cluster_rows['session_data'].dropna():
+                try:
+                    session = json.loads(session_json)
+                    trust = session.get('baseline_trust')
+                    if trust is not None:
+                        trust_scores.append(float(trust))
+                except:
+                    pass
+            if trust_scores:
+                avg_trust = np.mean(trust_scores)
+                if avg_trust >= 0.8:
+                    characteristics['trust_level'] = 'high'
+                elif avg_trust >= 0.6:
+                    characteristics['trust_level'] = 'medium'
+                else:
+                    characteristics['trust_level'] = 'low'
+        
+        # 7. Average sessions per user
+        if 'session_index' in cluster_rows.columns:
+            characteristics['avg_sessions'] = cluster_rows.groupby('user_uuid')['session_index'].nunique().mean()
+        
+        # 8. Click vs Show ratio (engagement level)
+        if 'session_data' in cluster_rows.columns or 'key_behaviors' in cluster_rows.columns:
+            click_count = 0
+            show_count = 0
+            for user_id in cluster_data['user_uuid'].unique():
+                user_data = cluster_rows[cluster_rows['user_uuid'] == user_id]
+                events = self._extract_events_from_user_data(user_data)
+                for event in events:
+                    if 'click' in event.lower():
+                        click_count += 1
+                    elif 'show' in event.lower():
+                        show_count += 1
+            total_events = click_count + show_count
+            if total_events > 0:
+                characteristics['click_ratio'] = click_count / total_events
+        
+        # 9. Exploration depth (unique features explored)
+        if 'session_data' in cluster_rows.columns:
+            unique_features = set()
+            for session_json in cluster_rows['session_data'].dropna():
+                try:
+                    session = json.loads(session_json)
+                    feature = session.get('explored_feature', '')
+                    if feature:
+                        unique_features.add(feature)
+                except:
+                    pass
+            characteristics['exploration_depth'] = len(unique_features)
+        
+        # 10. Average confidence score
+        if 'session_data' in cluster_rows.columns:
+            confidence_scores = []
+            for session_json in cluster_rows['session_data'].dropna():
+                try:
+                    session = json.loads(session_json)
+                    confidence = session.get('confidence_score')
+                    if confidence is not None:
+                        confidence_scores.append(float(confidence))
+                except:
+                    pass
+            if confidence_scores:
+                characteristics['confidence_score'] = np.mean(confidence_scores)
+        
+        # 11. Payment-related actions count
+        if 'session_data' in cluster_rows.columns or 'key_behaviors' in cluster_rows.columns:
+            payment_keywords = ['payment', 'pay', 'checkout', 'transaction', 'va', 'qris', 'qr']
+            payment_count = 0
+            for user_id in cluster_data['user_uuid'].unique():
+                user_data = cluster_rows[cluster_rows['user_uuid'] == user_id]
+                events = self._extract_events_from_user_data(user_data)
+                for event in events:
+                    if any(kw in event.lower() for kw in payment_keywords):
+                        payment_count += 1
+            characteristics['payment_related_actions'] = payment_count / len(cluster_data) if len(cluster_data) > 0 else 0
+        
+        # 12. Session pattern (single long vs multiple short)
+        if 'session_index' in cluster_rows.columns and 'session_size' in cluster_rows.columns:
+            session_counts = cluster_rows.groupby('user_uuid')['session_index'].nunique()
+            avg_session_sizes = cluster_rows.groupby('user_uuid')['session_size'].mean()
+            if len(session_counts) > 0:
+                avg_sessions = session_counts.mean()
+                avg_size = avg_session_sizes.mean()
+                if avg_sessions <= 1.5 and avg_size > 10:
+                    characteristics['session_pattern'] = 'single_long'
+                elif avg_sessions > 2:
+                    characteristics['session_pattern'] = 'multiple_short'
+                else:
+                    characteristics['session_pattern'] = 'moderate'
+        
+        # 13. Key behavior types
+        if 'session_data' in cluster_rows.columns:
+            behavior_types = []
+            for session_json in cluster_rows['session_data'].dropna():
+                try:
+                    session = json.loads(session_json)
+                    behaviors = session.get('key_behaviors', [])
+                    for behavior in behaviors:
+                        if isinstance(behavior, str):
+                            behavior_lower = behavior.lower()
+                            if 'payment' in behavior_lower or 'pay' in behavior_lower:
+                                behavior_types.append('payment')
+                            elif 'voucher' in behavior_lower or 'coupon' in behavior_lower:
+                                behavior_types.append('voucher')
+                            elif 'installment' in behavior_lower or '分期' in behavior:
+                                behavior_types.append('installment')
+                            elif 'home' in behavior_lower or '主页' in behavior:
+                                behavior_types.append('homepage')
+                except:
+                    pass
+            if behavior_types:
+                behavior_counts = pd.Series(behavior_types).value_counts()
+                characteristics['key_behavior_types'] = behavior_counts.head(3).index.tolist()
+        
+        return characteristics
+    
+    def _generate_cluster_label(self, completion_rate, characteristics, existing_labels=None, cluster_id=None, force_unique=False, attempt=0):
+        """Generate descriptive cluster label using AI based on business characteristics
+        
+        Args:
+            completion_rate: Transaction completion rate
+            characteristics: Dictionary of cluster characteristics
+            existing_labels: List of already generated labels (to avoid duplicates)
+            cluster_id: Cluster ID for reference
+            force_unique: If True, emphasize unique features
+            attempt: Retry attempt number (for adding more features)
+        """
+        if existing_labels is None:
+            existing_labels = []
+        
+        # Build a comprehensive description of cluster characteristics
+        char_desc = []
+        
+        # Conversion rate
+        if completion_rate >= 0.7:
+            char_desc.append(f"High conversion rate ({completion_rate*100:.1f}%)")
+        elif completion_rate >= 0.3:
+            char_desc.append(f"Medium conversion rate ({completion_rate*100:.1f}%)")
+        else:
+            char_desc.append(f"Low conversion rate ({completion_rate*100:.1f}%)")
+        
+        # Engagement
+        if characteristics['click_ratio'] > 0:
+            if characteristics['click_ratio'] >= 0.4:
+                char_desc.append("high engagement (many click actions)")
+            elif characteristics['click_ratio'] >= 0.2:
+                char_desc.append("moderate engagement")
+            else:
+                char_desc.append("low engagement (mostly passive browsing)")
+        
+        # Intent category
+        if characteristics['intent_category']:
+            top_cat = list(characteristics['intent_category'].keys())[0]
+            cat_name = top_cat.replace('_intent', '').replace('_', ' ')
+            char_desc.append(f"primary intent: {cat_name}")
+        
+        # Exploration depth
+        if characteristics['exploration_depth'] > 0:
+            if characteristics['exploration_depth'] >= 3:
+                char_desc.append("deep exploration (explored 3+ features)")
+            elif characteristics['exploration_depth'] >= 2:
+                char_desc.append("moderate exploration (explored 2 features)")
+            else:
+                char_desc.append("shallow exploration (explored 1 feature)")
+        
+        # Activation speed
+        if characteristics['activation_speed']:
+            speed_map = {
+                'immediate': 'activated within 1 hour',
+                'fast': 'activated within 24 hours',
+                'moderate': 'activated within 7 days',
+                'slow': 'activated after 7+ days'
+            }
+            char_desc.append(f"activation speed: {speed_map.get(characteristics['activation_speed'], characteristics['activation_speed'])}")
+        
+        # Behavior diversity
+        if characteristics['behavior_diversity'] > 0:
+            if characteristics['behavior_diversity'] >= 20:
+                char_desc.append("high behavior diversity (20+ unique actions)")
+            elif characteristics['behavior_diversity'] >= 10:
+                char_desc.append("moderate behavior diversity (10-19 unique actions)")
+            else:
+                char_desc.append("low behavior diversity (<10 unique actions)")
+        
+        # Payment related
+        if characteristics['payment_related_actions'] > 5:
+            char_desc.append(f"payment-focused ({characteristics['payment_related_actions']:.1f} payment-related actions per user)")
+        
+        # Session pattern
+        if characteristics['session_pattern']:
+            pattern_map = {
+                'single_long': 'single long session pattern',
+                'multiple_short': 'multiple short sessions pattern',
+                'moderate': 'moderate session pattern'
+            }
+            char_desc.append(f"session pattern: {pattern_map.get(characteristics['session_pattern'], characteristics['session_pattern'])}")
+        
+        # Concerns
+        if characteristics['concern_types']:
+            char_desc.append(f"main concerns: {', '.join(characteristics['concern_types'][:2])}")
+        
+        # Trust level
+        if characteristics['trust_level']:
+            char_desc.append(f"trust level: {characteristics['trust_level']}")
+        
+        # Confidence score
+        if characteristics['confidence_score'] > 0:
+            if characteristics['confidence_score'] > 0.8:
+                char_desc.append("high confidence in intent")
+            elif characteristics['confidence_score'] > 0.5:
+                char_desc.append("moderate confidence in intent")
+            else:
+                char_desc.append("low confidence in intent")
+        
+        # Key behavior types
+        if characteristics['key_behavior_types']:
+            char_desc.append(f"key behaviors: {', '.join(characteristics['key_behavior_types'][:2])}")
+        
+        # Add more distinguishing features if forcing uniqueness
+        if force_unique:
+            if characteristics['avg_sessions'] > 0:
+                char_desc.append(f"average sessions per user: {characteristics['avg_sessions']:.1f}")
+            if characteristics['behavior_diversity'] > 0:
+                char_desc.append(f"total unique behaviors: {characteristics['behavior_diversity']}")
+            if characteristics['explored_features']:
+                char_desc.append(f"explored features: {', '.join(characteristics['explored_features'][:2])}")
+        
+        # Build prompt for AI
+        characteristics_text = "; ".join(char_desc)
+        
+        # Add existing labels to prompt to avoid duplicates
+        existing_labels_text = ""
+        if existing_labels:
+            existing_labels_text = f"\n\nIMPORTANT: The following labels are already used. Your label MUST be different:\n{', '.join(existing_labels)}\n"
+        
+        uniqueness_instruction = ""
+        if force_unique or existing_labels:
+            uniqueness_instruction = "\n6. CRITICAL: The label MUST be unique and different from any existing labels. Emphasize the most distinctive features that make this cluster different."
+        
+        prompt = f"""Based on the following user cluster characteristics, generate a concise, descriptive English label (2-4 words maximum, use hyphens to separate words if needed).
+
+Cluster characteristics:
+{characteristics_text}{existing_labels_text}
+
+Requirements:
+1. The label should be in English
+2. Maximum 4 words, use hyphens if needed (e.g., "High-Conversion-Explorers" or "Low-Engagement-Browsers")
+3. Focus on the most distinctive features (conversion rate, engagement level, intent type, exploration depth)
+4. Make it business-friendly and actionable
+5. Return ONLY the label, no explanation{uniqueness_instruction}
+
+Example formats:
+- "High-Conversion-Payment-Intent"
+- "Low-Engagement-Explorers"
+- "Fast-Activation-Browsers"
+- "Deep-Exploration-Users"
+
+Label:"""
+        
+        # Call Gemini API to generate label
+        try:
+            ai_label = self._call_gemini_text(prompt, max_retries=2, base_delay=1)
+            if ai_label and len(ai_label.strip()) > 0:
+                # Clean up the response (remove quotes, extra whitespace)
+                label = ai_label.strip().strip('"').strip("'").strip()
+                # Limit length
+                if len(label) > 50:
+                    label = label[:47] + "..."
+                return label
+        except Exception as e:
+            print(f"      ⚠️  AI label generation failed: {e}, using fallback")
+        
+        # Fallback: Generate simple English label
+        parts = []
+        if completion_rate >= 0.7:
+            parts.append("High-Conversion")
+        elif completion_rate >= 0.3:
+            parts.append("Medium-Conversion")
+        else:
+            parts.append("Low-Conversion")
+        
+        if characteristics['click_ratio'] > 0.3:
+            parts.append("High-Engagement")
+        elif characteristics['click_ratio'] > 0:
+            parts.append("Moderate-Engagement")
+        else:
+            parts.append("Low-Engagement")
+        
+        if characteristics['intent_category']:
+            top_cat = list(characteristics['intent_category'].keys())[0]
+            cat_name = top_cat.replace('_intent', '').replace('_', '-').title()
+            parts.append(cat_name)
+        elif characteristics['exploration_depth'] >= 3:
+            parts.append("Deep-Explorers")
+        elif characteristics['exploration_depth'] >= 2:
+            parts.append("Moderate-Explorers")
+        else:
+            parts.append("Shallow-Explorers")
+        
+        # Add distinguishing feature for uniqueness
+        fallback_label = "-".join(parts[:3])
+        
+        # If this label already exists, add more distinguishing features
+        if existing_labels and fallback_label in existing_labels:
+            if characteristics['activation_speed']:
+                speed_map = {
+                    'immediate': 'Immediate',
+                    'fast': 'Fast',
+                    'moderate': 'Moderate',
+                    'slow': 'Slow'
+                }
+                parts.append(speed_map.get(characteristics['activation_speed'], 'Standard'))
+            elif characteristics['behavior_diversity'] > 0:
+                if characteristics['behavior_diversity'] >= 15:
+                    parts.append("Diverse")
+                else:
+                    parts.append("Focused")
+            elif characteristics['avg_sessions'] > 0:
+                if characteristics['avg_sessions'] >= 3:
+                    parts.append("MultiSession")
+                else:
+                    parts.append("SingleSession")
+            else:
+                parts.append(f"C{cluster_id}" if cluster_id is not None else "Unique")
+            
+            fallback_label = "-".join(parts[:4])
+        
+        return fallback_label
     
     def generate_visualizations(self):
         """Generate visualization charts"""
@@ -580,8 +1383,8 @@ class UserIntentAnalyzer:
         fig = make_subplots(
             rows=2, cols=2,
             subplot_titles=(
-                'Clustering Results (PCA with Sub-clusters)', 'Sub-Cluster Distribution',
-                'Transaction Completion by Sub-Cluster', 'Sub-Cluster Size Comparison'
+                'Clustering Results (PCA)', 'Cluster Distribution',
+                'Transaction Completion by Cluster', 'Cluster Size Comparison'
             ),
             specs=[[{"type": "scatter"}, {"type": "bar"}],
                    [{"type": "bar"}, {"type": "scatter"}]],
@@ -589,209 +1392,89 @@ class UserIntentAnalyzer:
             horizontal_spacing=0.1
         )
         
-        # 1. PCA visualization (with sub-clusters)
+        # 1. PCA visualization
         pca = PCA(n_components=2)
         pca_result = pca.fit_transform(self.scaled_embeddings)
         
         colors = ['#2c5282', '#d4af37', '#48bb78', '#ed8936', '#9f7aea']
-        sub_colors = ['#1a4d6b', '#b8941f', '#3a9b5f', '#c8752a', '#7f5fa8']
-        symbols = ['circle', 'square', 'diamond', 'triangle-up', 'star']
         
-        # Show sub-clusters with different symbols (if available)
-        if 'sub_cluster' in self.embeddings_df.columns:
-            for cluster_id in sorted(self.embeddings_df['cluster'].unique()):
-                cluster_mask = self.embeddings_df['cluster'] == cluster_id
-                for sub_id in sorted(self.embeddings_df[cluster_mask]['sub_cluster'].unique()):
-                    sub_mask = cluster_mask & (self.embeddings_df['sub_cluster'] == sub_id)
-                    if sub_mask.sum() > 0:
-                        sub_label = self.embeddings_df[sub_mask]['sub_cluster_label'].iloc[0]
-                        
-                        fig.add_trace(
-                            go.Scatter(
-                                x=pca_result[sub_mask, 0],
-                                y=pca_result[sub_mask, 1],
-                                mode='markers',
-                                name=sub_label,
-                                marker=dict(
-                                    size=8,
-                                    color=sub_colors[cluster_id % len(sub_colors)],
-                                    line=dict(width=1.5, color='#ffffff'),
-                                    opacity=0.8,
-                                    symbol=symbols[sub_id % len(symbols)]
-                                ),
-                                showlegend=True
-                            ),
-                            row=1, col=1
-                        )
-        else:
-            # Fallback to main clusters only
-            for cluster_id in sorted(self.embeddings_df['cluster'].unique()):
-                mask = self.embeddings_df['cluster'] == cluster_id
-                cluster_name = self.embeddings_df[mask]['cluster_label'].iloc[0]
-                
-                fig.add_trace(
-                    go.Scatter(
-                        x=pca_result[mask, 0],
-                        y=pca_result[mask, 1],
-                        mode='markers',
-                        name=cluster_name,
-                        marker=dict(
-                            size=10,
-                            color=colors[cluster_id % len(colors)],
-                            line=dict(width=1, color='#ffffff'),
-                            opacity=0.7
-                        ),
-                        showlegend=True
+        for cluster_id in sorted(self.embeddings_df['cluster'].unique()):
+            mask = self.embeddings_df['cluster'] == cluster_id
+            cluster_name = self.embeddings_df[mask]['cluster_label'].iloc[0]
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=pca_result[mask, 0],
+                    y=pca_result[mask, 1],
+                    mode='markers',
+                    name=cluster_name,
+                    marker=dict(
+                        size=10,
+                        color=colors[cluster_id % len(colors)],
+                        line=dict(width=1, color='#ffffff'),
+                        opacity=0.7
                     ),
-                    row=1, col=1
-                )
-        
-        # 2. Cluster distribution (main + sub-clusters)
-        if 'sub_cluster_label' in self.embeddings_df.columns:
-            sub_cluster_counts = self.embeddings_df['sub_cluster_label'].value_counts().sort_index()
-            sub_cluster_names_list = sub_cluster_counts.index.tolist()
-            
-            # Create color mapping
-            color_map = {}
-            for idx, (cluster_id, sub_id) in enumerate(self.embeddings_df[['cluster', 'sub_cluster']].drop_duplicates().values):
-                color_map[f"{cluster_id}_{sub_id}"] = colors[cluster_id % len(colors)]
-            
-            bar_colors = []
-            for label in sub_cluster_names_list:
-                # Extract cluster_id from label or use default
-                cluster_id = 0
-                for cid in self.embeddings_df['cluster'].unique():
-                    if self.embeddings_df[self.embeddings_df['cluster'] == cid]['sub_cluster_label'].iloc[0] == label:
-                        cluster_id = cid
-                        break
-                bar_colors.append(colors[cluster_id % len(colors)])
-            
-            fig.add_trace(
-                go.Bar(
-                    x=sub_cluster_names_list,
-                    y=sub_cluster_counts.values,
-                    marker_color=bar_colors,
-                    marker_line_color='#0a2540',
-                    marker_line_width=1,
-                    showlegend=False,
-                    text=sub_cluster_counts.values,
-                    textposition='auto',
+                    showlegend=True
                 ),
-                row=1, col=2
-            )
-        else:
-            cluster_counts = self.embeddings_df['cluster'].value_counts().sort_index()
-            cluster_names_list = [self.embeddings_df[self.embeddings_df['cluster'] == c]['cluster_label'].iloc[0] 
-                                 for c in cluster_counts.index]
-            
-            fig.add_trace(
-                go.Bar(
-                    x=cluster_names_list,
-                    y=cluster_counts.values,
-                    marker_color=[colors[i % len(colors)] for i in cluster_counts.index],
-                    marker_line_color='#0a2540',
-                    marker_line_width=1,
-                    showlegend=False,
-                    text=cluster_counts.values,
-                    textposition='auto',
-                ),
-                row=1, col=2
+                row=1, col=1
             )
         
-        # 3. Transaction completion by sub-cluster
-        if 'sub_cluster_label' in self.embeddings_df.columns:
-            completion_by_sub = self.embeddings_df.groupby('sub_cluster_label')['completed_transaction'].agg(['mean', 'count'])
-            sub_names = completion_by_sub.index.tolist()
-            
-            sub_bar_colors = []
-            for label in sub_names:
-                cluster_id = 0
-                for cid in self.embeddings_df['cluster'].unique():
-                    if self.embeddings_df[self.embeddings_df['cluster'] == cid]['sub_cluster_label'].iloc[0] == label:
-                        cluster_id = cid
-                        break
-                sub_bar_colors.append(colors[cluster_id % len(colors)])
-            
-            fig.add_trace(
-                go.Bar(
-                    x=sub_names,
-                    y=completion_by_sub['mean'] * 100,
-                    marker_color=sub_bar_colors,
-                    marker_line_color='#0a2540',
-                    marker_line_width=1,
-                    showlegend=False,
-                    text=[f"{v:.1f}%" for v in completion_by_sub['mean'] * 100],
-                    textposition='auto',
-                ),
-                row=2, col=1
-            )
-        else:
-            completion_by_cluster = self.embeddings_df.groupby('cluster')['completed_transaction'].agg(['mean', 'count'])
-            cluster_names_list = [self.embeddings_df[self.embeddings_df['cluster'] == c]['cluster_label'].iloc[0] 
-                                 for c in completion_by_cluster.index]
-            
-            fig.add_trace(
-                go.Bar(
-                    x=cluster_names_list,
-                    y=completion_by_cluster['mean'] * 100,
-                    marker_color=[colors[i % len(colors)] for i in completion_by_cluster.index],
-                    marker_line_color='#0a2540',
-                    marker_line_width=1,
-                    showlegend=False,
-                    text=[f"{v:.1f}%" for v in completion_by_cluster['mean'] * 100],
-                    textposition='auto',
-                ),
-                row=2, col=1
-            )
+        # 2. Cluster distribution
+        cluster_counts = self.embeddings_df['cluster'].value_counts().sort_index()
+        cluster_names_list = [self.embeddings_df[self.embeddings_df['cluster'] == c]['cluster_label'].iloc[0] 
+                             for c in cluster_counts.index]
         
-        # 4. Sub-cluster comparison (replacing slow t-SNE with faster visualization)
-        # Show sub-cluster sizes comparison
-        if 'sub_cluster_label' in self.embeddings_df.columns:
-            sub_cluster_sizes = self.embeddings_df['sub_cluster_label'].value_counts().sort_index()
-            sub_names = sub_cluster_sizes.index.tolist()
-            
-            sub_bar_colors = []
-            for label in sub_names:
-                cluster_id = 0
-                for cid in self.embeddings_df['cluster'].unique():
-                    matching = self.embeddings_df[self.embeddings_df['cluster'] == cid]
-                    if len(matching) > 0 and matching['sub_cluster_label'].iloc[0] == label:
-                        cluster_id = cid
-                        break
-                sub_bar_colors.append(colors[cluster_id % len(colors)])
-            
-            fig.add_trace(
-                go.Bar(
-                    x=sub_names,
-                    y=sub_cluster_sizes.values,
-                    marker_color=sub_bar_colors,
-                    marker_line_color='#0a2540',
-                    marker_line_width=1,
-                    showlegend=False,
-                    text=sub_cluster_sizes.values,
-                    textposition='auto',
-                ),
-                row=2, col=2
-            )
-        else:
-            # Fallback: show main cluster sizes
-            cluster_sizes = self.embeddings_df['cluster'].value_counts().sort_index()
-            cluster_names_list = [self.embeddings_df[self.embeddings_df['cluster'] == c]['cluster_label'].iloc[0] 
-                                 for c in cluster_sizes.index]
-            
-            fig.add_trace(
-                go.Bar(
-                    x=cluster_names_list,
-                    y=cluster_sizes.values,
-                    marker_color=[colors[i % len(colors)] for i in cluster_sizes.index],
-                    marker_line_color='#0a2540',
-                    marker_line_width=1,
-                    showlegend=False,
-                    text=cluster_sizes.values,
-                    textposition='auto',
-                ),
-                row=2, col=2
-            )
+        fig.add_trace(
+            go.Bar(
+                x=cluster_names_list,
+                y=cluster_counts.values,
+                marker_color=[colors[i % len(colors)] for i in cluster_counts.index],
+                marker_line_color='#0a2540',
+                marker_line_width=1,
+                showlegend=False,
+                text=cluster_counts.values,
+                textposition='auto',
+            ),
+            row=1, col=2
+        )
+        
+        # 3. Transaction completion by cluster
+        completion_by_cluster = self.embeddings_df.groupby('cluster')['completed_transaction'].agg(['mean', 'count'])
+        cluster_names_list = [self.embeddings_df[self.embeddings_df['cluster'] == c]['cluster_label'].iloc[0] 
+                             for c in completion_by_cluster.index]
+        
+        fig.add_trace(
+            go.Bar(
+                x=cluster_names_list,
+                y=completion_by_cluster['mean'] * 100,
+                marker_color=[colors[i % len(colors)] for i in completion_by_cluster.index],
+                marker_line_color='#0a2540',
+                marker_line_width=1,
+                showlegend=False,
+                text=[f"{v:.1f}%" for v in completion_by_cluster['mean'] * 100],
+                textposition='auto',
+            ),
+            row=2, col=1
+        )
+        
+        # 4. Cluster size comparison
+        cluster_sizes = self.embeddings_df['cluster'].value_counts().sort_index()
+        cluster_names_list = [self.embeddings_df[self.embeddings_df['cluster'] == c]['cluster_label'].iloc[0] 
+                             for c in cluster_sizes.index]
+        
+        fig.add_trace(
+            go.Bar(
+                x=cluster_names_list,
+                y=cluster_sizes.values,
+                marker_color=[colors[i % len(colors)] for i in cluster_sizes.index],
+                marker_line_color='#0a2540',
+                marker_line_width=1,
+                showlegend=False,
+                text=cluster_sizes.values,
+                textposition='auto',
+            ),
+            row=2, col=2
+        )
         
         # Update layout
         fig.update_layout(
@@ -809,11 +1492,11 @@ class UserIntentAnalyzer:
         
         fig.update_xaxes(title_text="PC1", row=1, col=1)
         fig.update_yaxes(title_text="PC2", row=1, col=1)
-        fig.update_xaxes(title_text="Sub-Cluster", row=1, col=2)
+        fig.update_xaxes(title_text="Cluster", row=1, col=2)
         fig.update_yaxes(title_text="Number of Users", row=1, col=2)
-        fig.update_xaxes(title_text="Sub-Cluster", row=2, col=1)
+        fig.update_xaxes(title_text="Cluster", row=2, col=1)
         fig.update_yaxes(title_text="Completion Rate (%)", row=2, col=1)
-        fig.update_xaxes(title_text="Sub-Cluster", row=2, col=2)
+        fig.update_xaxes(title_text="Cluster", row=2, col=2)
         fig.update_yaxes(title_text="Number of Users", row=2, col=2)
         
         return fig
@@ -839,11 +1522,106 @@ class UserIntentAnalyzer:
         
         return visualizations
     
+    def _get_behavior_diversity(self, cluster_df):
+        """Get behavior diversity (average unique events per user)"""
+        if 'event_name' in cluster_df.columns:
+            return cluster_df.groupby('user_uuid')['event_name'].nunique().mean()
+        elif 'key_behaviors' in cluster_df.columns or 'session_data' in cluster_df.columns:
+            # Extract from session data
+            diversities = []
+            for user_id in cluster_df['user_uuid'].unique():
+                user_data = cluster_df[cluster_df['user_uuid'] == user_id]
+                events = set()
+                for _, row in user_data.iterrows():
+                    if 'key_behaviors' in row and pd.notna(row['key_behaviors']):
+                        try:
+                            behaviors = json.loads(row['key_behaviors'])
+                            for behavior in behaviors:
+                                if isinstance(behavior, str):
+                                    event_name = behavior.split(' (')[0].strip()
+                                    events.add(event_name)
+                        except:
+                            pass
+                    elif 'session_data' in row and pd.notna(row['session_data']):
+                        try:
+                            session = json.loads(row['session_data'])
+                            behaviors = session.get('key_behaviors', [])
+                            for behavior in behaviors:
+                                if isinstance(behavior, str):
+                                    event_name = behavior.split(' (')[0].strip()
+                                    events.add(event_name)
+                        except:
+                            pass
+                diversities.append(len(events))
+            return np.mean(diversities) if diversities else 0
+        return 0
+    
+    def _get_unique_events_count(self, cluster_df):
+        """Get total unique events count"""
+        if 'event_name' in cluster_df.columns:
+            return cluster_df['event_name'].nunique()
+        elif 'key_behaviors' in cluster_df.columns or 'session_data' in cluster_df.columns:
+            events = set()
+            for _, row in cluster_df.iterrows():
+                if 'key_behaviors' in row and pd.notna(row['key_behaviors']):
+                    try:
+                        behaviors = json.loads(row['key_behaviors'])
+                        for behavior in behaviors:
+                            if isinstance(behavior, str):
+                                event_name = behavior.split(' (')[0].strip()
+                                events.add(event_name)
+                    except:
+                        pass
+                elif 'session_data' in row and pd.notna(row['session_data']):
+                    try:
+                        session = json.loads(row['session_data'])
+                        behaviors = session.get('key_behaviors', [])
+                        for behavior in behaviors:
+                            if isinstance(behavior, str):
+                                event_name = behavior.split(' (')[0].strip()
+                                events.add(event_name)
+                    except:
+                        pass
+            return len(events)
+        return 0
+    
+    def _extract_events_from_user_data(self, user_data):
+        """Extract event list from user_data (handles both old and new formats)"""
+        events = []
+        if 'event_name' in user_data.columns:
+            events = self._extract_events_from_user_data(user_data)
+        elif 'key_behaviors' in user_data.columns:
+            for _, row in user_data.iterrows():
+                if pd.notna(row.get('key_behaviors')):
+                    try:
+                        behaviors = json.loads(row['key_behaviors'])
+                        for behavior in behaviors:
+                            if isinstance(behavior, str):
+                                event_name = behavior.split(' (')[0].strip()
+                                events.append(event_name)
+                    except:
+                        pass
+        elif 'session_data' in user_data.columns:
+            for _, row in user_data.iterrows():
+                if pd.notna(row.get('session_data')):
+                    try:
+                        session = json.loads(row['session_data'])
+                        behaviors = session.get('key_behaviors', [])
+                        for behavior in behaviors:
+                            if isinstance(behavior, str):
+                                event_name = behavior.split(' (')[0].strip()
+                                events.append(event_name)
+                    except:
+                        pass
+        return events
+    
     def _generate_cluster_heatmap(self):
         """Generate heatmap showing feature comparison across clusters"""
         # Calculate features for each cluster
         cluster_features = []
         feature_names = []
+        
+        has_events = 'event_name' in self.df.columns
         
         for cluster_id in sorted(self.embeddings_df['cluster'].unique()):
             cluster_data = self.embeddings_df[self.embeddings_df['cluster'] == cluster_id]
@@ -852,13 +1630,21 @@ class UserIntentAnalyzer:
             
             features = {
                 'Completion Rate': cluster_data['completed_transaction'].mean() * 100,
-                'Avg Events': cluster_df.groupby('user_uuid').size().mean(),
-                'Behavior Diversity': cluster_df.groupby('user_uuid')['event_name'].nunique().mean(),
-                'Unique Events': cluster_df['event_name'].nunique(),
-                'Total Events': len(cluster_df),
             }
             
-            if 'approved_time' in self.df.columns:
+            if has_events:
+                features.update({
+                    'Avg Events': cluster_df.groupby('user_uuid').size().mean(),
+                    'Behavior Diversity': self._get_behavior_diversity(cluster_df),
+                    'Unique Events': self._get_unique_events_count(cluster_df),
+                    'Total Events': len(cluster_df),
+                })
+            elif 'total_sessions' in self.df.columns:
+                 features.update({
+                    'Avg Sessions': cluster_df['total_sessions'].mean(),
+                 })
+            
+            if 'approved_time' in self.df.columns and 'event_time' in self.df.columns:
                 cluster_df['approved_time'] = pd.to_datetime(cluster_df['approved_time'], errors='coerce')
                 cluster_df['event_time'] = pd.to_datetime(cluster_df['event_time'], errors='coerce')
                 time_to_first = []
@@ -960,8 +1746,42 @@ class UserIntentAnalyzer:
             cluster_df = self.df[self.df['user_uuid'].isin(cluster_users)]
             
             # Get top 10 most common events for this cluster
-            event_counts = cluster_df['event_name'].value_counts().head(10)
-            cluster_patterns[cluster_id] = event_counts.to_dict()
+            # Handle both old format (event_name column) and new format (session_data)
+            if 'event_name' in cluster_df.columns:
+                event_counts = cluster_df['event_name'].value_counts().head(10)
+            elif 'key_behaviors' in cluster_df.columns:
+                # Extract events from key_behaviors JSON
+                all_events = []
+                for behaviors_json in cluster_df['key_behaviors'].dropna():
+                    try:
+                        behaviors = json.loads(behaviors_json)
+                        for behavior in behaviors:
+                            if isinstance(behavior, str):
+                                # Extract event name (before " (" if present)
+                                event_name = behavior.split(' (')[0].strip()
+                                all_events.append(event_name)
+                    except:
+                        continue
+                event_counts = pd.Series(all_events).value_counts().head(10)
+            elif 'session_data' in cluster_df.columns:
+                # Extract events from session_data
+                all_events = []
+                for session_json in cluster_df['session_data'].dropna():
+                    try:
+                        session = json.loads(session_json)
+                        behaviors = session.get('key_behaviors', [])
+                        for behavior in behaviors:
+                            if isinstance(behavior, str):
+                                # Extract event name (before " (" if present)
+                                event_name = behavior.split(' (')[0].strip()
+                                all_events.append(event_name)
+                    except:
+                        continue
+                event_counts = pd.Series(all_events).value_counts().head(10)
+            else:
+                event_counts = pd.Series()
+            
+            cluster_patterns[cluster_id] = event_counts.to_dict() if len(event_counts) > 0 else {}
         
         # Create comparison chart
         all_events = set()
@@ -1017,7 +1837,7 @@ class UserIntentAnalyzer:
             
             completion_rate = cluster_data['completed_transaction'].mean()
             avg_events = cluster_df.groupby('user_uuid').size().mean()
-            diversity = cluster_df.groupby('user_uuid')['event_name'].nunique().mean()
+            diversity = self._get_behavior_diversity(cluster_df)
             
             # Normalize to 0-100 scale
             features = [
@@ -1099,7 +1919,7 @@ class UserIntentAnalyzer:
         user_data = user_data.sort_values('event_time')
         
         # Create timeline
-        events = user_data['event_name'].tolist()
+        events = self._extract_events_from_user_data(user_data)
         times = user_data['event_time'].tolist()
         
         # Color events by type
@@ -1136,40 +1956,79 @@ class UserIntentAnalyzer:
         return fig
     
     def _generate_user_sankey(self, user_data, user_id):
-        """Generate Sankey diagram for user event flow"""
-        events = user_data['event_name'].tolist()
+        """Generate Sankey diagram for user event flow (optimized to reduce clutter)"""
+        events = self._extract_events_from_user_data(user_data)
         
         if len(events) < 2:
             return None
         
-        # Build transition counts
+        # Count event frequencies
+        event_counts = {}
+        for event in events:
+            event_counts[event] = event_counts.get(event, 0) + 1
+        
+        # Filter: Keep only top N most frequent events (default: 12)
+        # This reduces clutter while maintaining the most important patterns
+        max_nodes = 12
+        sorted_events = sorted(event_counts.items(), key=lambda x: x[1], reverse=True)
+        top_events = {event: count for event, count in sorted_events[:max_nodes]}
+        
+        # If there are many events, also filter by minimum frequency threshold
+        if len(event_counts) > max_nodes:
+            min_frequency = max(1, len(events) // 20)  # At least 5% of total events
+            top_events = {event: count for event, count in top_events.items() 
+                         if count >= min_frequency}
+        
+        # Build transition counts (only for filtered events)
         transitions = {}
         for i in range(len(events) - 1):
             source = events[i]
             target = events[i + 1]
-            key = (source, target)
-            transitions[key] = transitions.get(key, 0) + 1
+            # Only include transitions between top events
+            if source in top_events and target in top_events:
+                key = (source, target)
+                transitions[key] = transitions.get(key, 0) + 1
         
-        # Create node and link lists
-        all_nodes = list(set(events))
+        if len(transitions) == 0:
+            return None
+        
+        # Filter transitions: Keep only top transitions by weight
+        max_transitions = 20
+        sorted_transitions = sorted(transitions.items(), key=lambda x: x[1], reverse=True)
+        top_transitions = dict(sorted_transitions[:max_transitions])
+        
+        # Get unique nodes from top transitions
+        all_nodes = list(set([s for s, t in top_transitions.keys()] + 
+                            [t for s, t in top_transitions.keys()]))
         node_indices = {node: i for i, node in enumerate(all_nodes)}
         
         sources = []
         targets = []
         values = []
-        labels = []
         
-        for (source, target), count in transitions.items():
+        for (source, target), count in top_transitions.items():
             sources.append(node_indices[source])
             targets.append(node_indices[target])
             values.append(count)
+        
+        # Shorten labels for better readability
+        def shorten_label(label, max_len=25):
+            if len(label) <= max_len:
+                return label
+            # Try to keep meaningful parts
+            parts = label.split('_')
+            if len(parts) > 1:
+                return '_'.join(parts[:2])[:max_len] + '...'
+            return label[:max_len-3] + '...'
+        
+        node_labels = [shorten_label(node) for node in all_nodes]
         
         fig = go.Figure(data=[go.Sankey(
             node=dict(
                 pad=15,
                 thickness=20,
                 line=dict(color="black", width=0.5),
-                label=all_nodes,
+                label=node_labels,
                 color="#2c5282"
             ),
             link=dict(
@@ -1180,8 +2039,10 @@ class UserIntentAnalyzer:
             )
         )])
         
+        total_events = len(events)
+        shown_events = len(all_nodes)
         fig.update_layout(
-            title=f"User {user_id[:8]}... Event Flow (Sankey Diagram)",
+            title=f"User {user_id[:8]}... Event Flow (Top {shown_events} Events, {total_events} Total)",
             font_size=10,
             height=500
         )
@@ -1189,24 +2050,61 @@ class UserIntentAnalyzer:
         return fig
     
     def _generate_user_network(self, user_data, user_id):
-        """Generate network graph for user behavior sequence"""
-        events = user_data['event_name'].tolist()
+        """Generate network graph for user behavior sequence (optimized to reduce clutter)"""
+        events = self._extract_events_from_user_data(user_data)
         
         if len(events) < 2:
             return None
         
-        # Build edge list
+        # Count event frequencies
+        event_counts = {}
+        for event in events:
+            event_counts[event] = event_counts.get(event, 0) + 1
+        
+        # Filter: Keep only top N most frequent events (default: 10)
+        max_nodes = 10
+        sorted_events = sorted(event_counts.items(), key=lambda x: x[1], reverse=True)
+        top_events = {event: count for event, count in sorted_events[:max_nodes]}
+        
+        # If there are many events, also filter by minimum frequency threshold
+        if len(event_counts) > max_nodes:
+            min_frequency = max(1, len(events) // 20)  # At least 5% of total events
+            top_events = {event: count for event, count in top_events.items() 
+                         if count >= min_frequency}
+        
+        # Build edge list (only for filtered events)
         edges = []
         for i in range(len(events) - 1):
-            edges.append((events[i], events[i + 1]))
+            source = events[i]
+            target = events[i + 1]
+            if source in top_events and target in top_events:
+                edges.append((source, target))
+        
+        if len(edges) == 0:
+            return None
         
         # Count edge weights
         edge_weights = {}
         for edge in edges:
             edge_weights[edge] = edge_weights.get(edge, 0) + 1
         
-        # Create network visualization using scatter plot
-        all_nodes = list(set(events))
+        # Filter edges: Keep only edges with weight >= 2 or top 15 edges
+        if len(edge_weights) > 15:
+            sorted_edges = sorted(edge_weights.items(), key=lambda x: x[1], reverse=True)
+            top_edges = dict(sorted_edges[:15])
+            # Also include edges with weight >= 2
+            significant_edges = {edge: weight for edge, weight in edge_weights.items() 
+                               if weight >= 2}
+            edge_weights = {**top_edges, **significant_edges}
+        
+        # Get unique nodes from filtered edges
+        all_nodes = list(set([s for s, t in edge_weights.keys()] + 
+                            [t for s, t in edge_weights.keys()]))
+        
+        if len(all_nodes) == 0:
+            return None
+        
+        # Use force-directed layout simulation (simplified circular layout for better distribution)
         node_positions = {}
         angle_step = 2 * np.pi / len(all_nodes)
         for i, node in enumerate(all_nodes):
@@ -1215,15 +2113,17 @@ class UserIntentAnalyzer:
         
         fig = go.Figure()
         
-        # Draw edges
+        # Draw edges (only significant ones)
         for (source, target), weight in edge_weights.items():
             x0, y0 = node_positions[source]
             x1, y1 = node_positions[target]
+            # Thinner lines for better visibility
+            line_width = min(weight * 1.5, 8)  # Cap at 8px
             fig.add_trace(go.Scatter(
                 x=[x0, x1],
                 y=[y0, y1],
                 mode='lines',
-                line=dict(width=weight*2, color='rgba(44, 82, 130, 0.3)'),
+                line=dict(width=line_width, color='rgba(44, 82, 130, 0.25)'),
                 showlegend=False,
                 hoverinfo='skip'
             ))
@@ -1231,24 +2131,37 @@ class UserIntentAnalyzer:
         # Draw nodes
         node_x = [node_positions[node][0] for node in all_nodes]
         node_y = [node_positions[node][1] for node in all_nodes]
-        node_sizes = [events.count(node) * 10 for node in all_nodes]
+        node_sizes = [min(events.count(node) * 8, 50) for node in all_nodes]  # Cap node size
+        
+        # Shorten labels for better readability
+        def shorten_label(label, max_len=20):
+            if len(label) <= max_len:
+                return label
+            parts = label.split('_')
+            if len(parts) > 1:
+                return '_'.join(parts[:2])[:max_len] + '...'
+            return label[:max_len-3] + '...'
+        
+        node_labels = [shorten_label(node) for node in all_nodes]
         
         fig.add_trace(go.Scatter(
             x=node_x,
             y=node_y,
             mode='markers+text',
             marker=dict(size=node_sizes, color='#2c5282', line=dict(width=2, color='white')),
-            text=all_nodes,
+            text=node_labels,
             textposition="middle center",
-            textfont=dict(size=10, color='white'),
+            textfont=dict(size=9, color='white'),
             showlegend=False,
-            hovertemplate='<b>%{text}</b><extra></extra>'
+            hovertemplate='<b>%{text}</b><br>Frequency: %{marker.size}<extra></extra>'
         ))
         
+        total_events = len(events)
+        shown_events = len(all_nodes)
         fig.update_layout(
-            title=f"User {user_id[:8]}... Behavior Network",
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            title=f"User {user_id[:8]}... Behavior Network (Top {shown_events} Events, {total_events} Total)",
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2]),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2]),
             height=500,
             template="plotly_white",
             showlegend=False
@@ -1272,7 +2185,7 @@ class UserIntentAnalyzer:
         user_data = self.df[self.df['user_uuid'] == user_id].copy()
         user_data = user_data.sort_values('event_time')
         total_events = len(user_data)
-        unique_events = user_data['event_name'].nunique()
+        unique_events = len(set(self._extract_events_from_user_data(user_data)))
         has_transaction = user_data['fir_trx_time'].notna().any() if 'fir_trx_time' in user_data.columns else False
         
         if 'event_time' in user_data.columns and len(user_data) > 0:
@@ -1632,11 +2545,33 @@ class UserIntentAnalyzer:
                 metrics['lifecycle_distribution'] = {}
             
             # 3. Behavior feature analysis
-            event_types = cluster_df['event_name'].value_counts()
-            top_events = event_types.head(5).to_dict()
+            # Handle both old format (event_name column) and new format (session_data)
+            if 'event_name' in cluster_df.columns:
+                event_types = cluster_df['event_name'].value_counts()
+                top_events = event_types.head(5).to_dict()
+                unique_events_per_user = cluster_df.groupby('user_uuid')['event_name'].nunique().mean()
+            else:
+                # Extract events from session_data or key_behaviors
+                all_events = []
+                for user_id in cluster_df['user_uuid'].unique():
+                    user_data = cluster_df[cluster_df['user_uuid'] == user_id]
+                    events = self._extract_events_from_user_data(user_data)
+                    all_events.extend(events)
+                
+                if all_events:
+                    event_types = pd.Series(all_events).value_counts()
+                    top_events = event_types.head(5).to_dict()
+                    # Calculate unique events per user
+                    unique_counts = []
+                    for user_id in cluster_df['user_uuid'].unique():
+                        user_data = cluster_df[cluster_df['user_uuid'] == user_id]
+                        events = self._extract_events_from_user_data(user_data)
+                        unique_counts.append(len(set(events)))
+                    unique_events_per_user = np.mean(unique_counts) if unique_counts else 0
+                else:
+                    top_events = {}
+                    unique_events_per_user = 0
             
-            # Calculate behavior diversity
-            unique_events_per_user = cluster_df.groupby('user_uuid')['event_name'].nunique().mean()
             metrics['behavior_diversity'] = unique_events_per_user
             metrics['top_events'] = top_events
             
@@ -1646,11 +2581,21 @@ class UserIntentAnalyzer:
                 if len(users_with_tx) > 0:
                     # Analyze behavior paths of users who completed transactions
                     tx_users_data = cluster_df[cluster_df['user_uuid'].isin(users_with_tx)]
-                    tx_path = tx_users_data.groupby('user_uuid')['event_name'].apply(list)
+                    
+                    if 'event_name' in tx_users_data.columns:
+                        tx_path = tx_users_data.groupby('user_uuid')['event_name'].apply(list)
+                    else:
+                        # Extract events for each user
+                        tx_path_dict = {}
+                        for user_id in users_with_tx:
+                            user_data = tx_users_data[tx_users_data['user_uuid'] == user_id]
+                            events = self._extract_events_from_user_data(user_data)
+                            tx_path_dict[user_id] = events
+                        tx_path = pd.Series(tx_path_dict)
                     
                     # Find most common conversion paths
                     path_lengths = tx_path.apply(len)
-                    metrics['avg_path_length'] = path_lengths.mean()
+                    metrics['avg_path_length'] = path_lengths.mean() if len(path_lengths) > 0 else 0
                     metrics['conversion_users'] = len(users_with_tx)
                 else:
                     metrics['avg_path_length'] = 0
@@ -1844,7 +2789,6 @@ Do not use markdown formatting, just plain text.
         
         # Calculate cluster statistics
         cluster_stats = []
-        sub_cluster_stats = []
         
         for cluster_id in sorted(self.embeddings_df['cluster'].unique()):
             cluster_data = self.embeddings_df[self.embeddings_df['cluster'] == cluster_id]
@@ -1858,24 +2802,6 @@ Do not use markdown formatting, just plain text.
                 'percentage': len(cluster_data) / len(self.embeddings_df) * 100,
                 'completion_rate': completion_rate
             })
-            
-            # Calculate sub-cluster statistics
-            if 'sub_cluster' in self.embeddings_df.columns:
-                for sub_id in sorted(cluster_data['sub_cluster'].unique()):
-                    sub_data = cluster_data[cluster_data['sub_cluster'] == sub_id]
-                    if len(sub_data) > 0:
-                        sub_label = sub_data['sub_cluster_label'].iloc[0]
-                        sub_completion = sub_data['completed_transaction'].mean() * 100
-                        
-                        sub_cluster_stats.append({
-                            'main_cluster_id': cluster_id,
-                            'main_cluster_name': cluster_name,
-                            'sub_id': sub_id,
-                            'sub_label': sub_label,
-                            'count': len(sub_data),
-                            'percentage': len(sub_data) / len(self.embeddings_df) * 100,
-                            'completion_rate': sub_completion
-                        })
         
         # Calculate business metrics
         business_metrics = self._calculate_business_metrics()
@@ -2005,10 +2931,6 @@ Do not use markdown formatting, just plain text.
                     <div class="summary-card">
                         <div class="label">Main Clusters</div>
                         <div class="value">{len(cluster_stats)}</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="label">Sub-Clusters</div>
-                        <div class="value">{len(sub_cluster_stats) if sub_cluster_stats else len(cluster_stats)}</div>
                     </div>
                     <div class="summary-card">
                         <div class="label">Users with Transaction</div>
@@ -2265,130 +3187,6 @@ Return only the insights as a list, one per line, without numbering or markdown.
             </div>
 """
         
-        # Add detailed sub-cluster analysis for each main cluster
-        if sub_cluster_stats:
-            html_content += """
-            <div class="section">
-                <h2>🔬 Detailed Sub-Cluster Analysis by Main Cluster</h2>
-                <p style="color: #4a5568; margin-bottom: 25px; font-size: 1.05em;">
-                    This section provides detailed analysis of sub-clusters within each main cluster, 
-                    showing how users are further segmented based on their behavioral patterns.
-                </p>
-"""
-            
-            # Group sub-clusters by main cluster
-            for cluster_stat in cluster_stats:
-                cluster_id = cluster_stat['id']
-                cluster_name = cluster_stat['name']
-                
-                # Get sub-clusters for this main cluster
-                cluster_sub_stats = [s for s in sub_cluster_stats if s['main_cluster_id'] == cluster_id]
-                
-                if cluster_sub_stats:
-                    html_content += f"""
-                <div class="card" style="margin-bottom: 30px; border-left: 4px solid {'#2c5282' if cluster_id == 0 else '#d4af37'};">
-                    <h3 style="color: #0a2540; margin-bottom: 20px; font-size: 1.3em;">
-                        {cluster_name} (Cluster {cluster_id})
-                    </h3>
-                    <p style="color: #718096; margin-bottom: 15px; font-size: 0.95em;">
-                        This main cluster contains {len(cluster_sub_stats)} sub-clusters with {cluster_stat['count']} users total.
-                    </p>
-                    <table style="margin-top: 15px;">
-                        <thead>
-                            <tr>
-                                <th>Sub-Cluster</th>
-                                <th>Label</th>
-                                <th>Users</th>
-                                <th>% of Main Cluster</th>
-                                <th>% of Total Users</th>
-                                <th>Transaction Completion Rate</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-"""
-                    
-                    for sub_stat in cluster_sub_stats:
-                        pct_of_main = (sub_stat['count'] / cluster_stat['count'] * 100) if cluster_stat['count'] > 0 else 0
-                        html_content += f"""
-                            <tr>
-                                <td><strong>Sub-{sub_stat['sub_id']}</strong></td>
-                                <td>{sub_stat['sub_label'].split(' - ')[-1] if ' - ' in sub_stat['sub_label'] else sub_stat['sub_label']}</td>
-                                <td>{sub_stat['count']}</td>
-                                <td>{pct_of_main:.1f}%</td>
-                                <td>{sub_stat['percentage']:.1f}%</td>
-                                <td style="color: {'#48bb78' if sub_stat['completion_rate'] > 50 else '#e53e3e'}; font-weight: 600;">
-                                    {sub_stat['completion_rate']:.1f}%
-                                </td>
-                            </tr>
-"""
-                    
-                    html_content += """
-                        </tbody>
-                    </table>
-                    
-                    <!-- Sub-cluster insights -->
-                    <div style="margin-top: 20px; padding: 15px; background: #f7f8fa; border-radius: 6px;">
-                        <h4 style="color: #2d3748; margin-bottom: 12px; font-size: 1.05em;">Key Insights:</h4>
-                        <ul style="color: #4a5568; line-height: 1.8; padding-left: 20px;">
-"""
-                    
-                    # Generate insights
-                    max_completion_sub = max(cluster_sub_stats, key=lambda x: x['completion_rate'])
-                    min_completion_sub = min(cluster_sub_stats, key=lambda x: x['completion_rate'])
-                    largest_sub = max(cluster_sub_stats, key=lambda x: x['count'])
-                    
-                    html_content += f"""
-                            <li>The <strong>{max_completion_sub['sub_label'].split(' - ')[-1]}</strong> sub-cluster has the highest transaction completion rate ({max_completion_sub['completion_rate']:.1f}%)</li>
-                            <li>The <strong>{largest_sub['sub_label'].split(' - ')[-1]}</strong> sub-cluster is the largest, containing {largest_sub['count']} users ({largest_sub['count']/cluster_stat['count']*100:.1f}% of this main cluster)</li>
-                            <li>The <strong>{min_completion_sub['sub_label'].split(' - ')[-1]}</strong> sub-cluster shows the lowest completion rate ({min_completion_sub['completion_rate']:.1f}%), indicating potential conversion opportunities</li>
-"""
-                    
-                    html_content += """
-                        </ul>
-                    </div>
-                </div>
-"""
-            
-            html_content += """
-            </div>
-"""
-        
-        if sub_cluster_stats:
-            html_content += """
-            <div class="section">
-                <h2>🔬 Sub-Cluster Analysis</h2>
-                <p style="color: #4a5568; margin-bottom: 20px;">
-                    Detailed breakdown of sub-clusters within each main cluster:
-                </p>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Main Cluster</th>
-                            <th>Sub-Cluster Label</th>
-                            <th>Users</th>
-                            <th>Percentage</th>
-                            <th>Transaction Completion Rate</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-"""
-            
-            for stat in sub_cluster_stats:
-                html_content += f"""
-                        <tr>
-                            <td><strong>{stat['main_cluster_name']}</strong></td>
-                            <td>{stat['sub_label']}</td>
-                            <td>{stat['count']}</td>
-                            <td>{stat['percentage']:.1f}%</td>
-                            <td>{stat['completion_rate']:.1f}%</td>
-                        </tr>
-"""
-            
-            html_content += """
-                    </tbody>
-                </table>
-            </div>
-"""
         
         html_content += """
             <div class="section">
@@ -2472,45 +3270,20 @@ Return only the insights as a list, one per line, without numbering or markdown.
                             <option value="">-- Select a user --</option>
 """
         
-        # Add user options grouped by cluster and sub-cluster
+        # Add user options grouped by cluster
         for cluster_id in sorted(self.embeddings_df['cluster'].unique()):
             cluster_data = self.embeddings_df[self.embeddings_df['cluster'] == cluster_id]
             cluster_name = cluster_data['cluster_label'].iloc[0]
+            cluster_users = cluster_data['user_uuid'].unique()
             
-            # Group by sub-cluster
-            if 'sub_cluster' in cluster_data.columns:
-                for sub_cluster_id in sorted(cluster_data['sub_cluster'].unique()):
-                    sub_cluster_data = cluster_data[cluster_data['sub_cluster'] == sub_cluster_id]
-                    sub_cluster_users = sub_cluster_data['user_uuid'].unique()
-                    
-                    # Get sub-cluster name if available
-                    if sub_cluster_id >= 0 and len(sub_cluster_data) > 0:
-                        sub_cluster_label = sub_cluster_data['sub_cluster_label'].iloc[0] if 'sub_cluster_label' in sub_cluster_data.columns else f"Sub-cluster {sub_cluster_id}"
-                        optgroup_label = f"Cluster {cluster_id} ({cluster_name}) - {sub_cluster_label} ({len(sub_cluster_users)} users)"
-                    else:
-                        optgroup_label = f"Cluster {cluster_id} ({cluster_name}) - No sub-cluster ({len(sub_cluster_users)} users)"
-                    
-                    html_content += f"""
-                            <optgroup label="{optgroup_label}">
+            html_content += f"""
+                            <optgroup label="Cluster {cluster_id}: {cluster_name} ({len(cluster_users)} users)">
 """
-                    for user_id in sub_cluster_users:
-                        html_content += f"""
-                                <option value="{user_id}">{user_id[:25]}...</option>
-"""
-                    html_content += """
-                            </optgroup>
-"""
-            else:
-                # Fallback if no sub-cluster column
-                cluster_users = cluster_data['user_uuid'].unique()[:30]
+            for user_id in cluster_users:
                 html_content += f"""
-                            <optgroup label="Cluster {cluster_id}: {cluster_name} ({len(cluster_users)} users shown)">
-"""
-                for user_id in cluster_users[:15]:
-                    html_content += f"""
                                 <option value="{user_id}">{user_id[:25]}...</option>
 """
-                html_content += """
+            html_content += """
                             </optgroup>
 """
         
@@ -2542,7 +3315,7 @@ Return only the insights as a list, one per line, without numbering or markdown.
                         
                         // Sanitize user_id for filename (same as Python code)
                         const safeUserId = userId.replace(/[^a-zA-Z0-9._-]/g, '_');
-                        const userPathUrl = 'user_path_' + safeUserId + '.html';
+                        const userPathUrl = 'user_paths/user_path_' + safeUserId + '.html';
                         
                         // Try to open the static page first
                         // If it doesn't exist, fallback to interactive demo
@@ -2584,19 +3357,9 @@ Return only the insights as a list, one per line, without numbering or markdown.
                     <h3 style="color: #0a2540; margin-bottom: 15px;">Clustering Algorithm</h3>
                     <p style="color: #4a5568; line-height: 1.8;">
                         K-means clustering is applied to the standardized embedding vectors.
-                        The optimal number of main clusters is automatically determined using the silhouette score.
-                        After identifying main clusters, hierarchical sub-clustering is performed within each main cluster
-                        to identify finer-grained user segments. This two-level approach allows for both broad user intent
-                        categories and detailed behavioral patterns within each category.
-                    </p>
-                </div>
-                <div class="card" style="margin-top: 20px;">
-                    <h3 style="color: #0a2540; margin-bottom: 15px;">Sub-Clustering Strategy</h3>
-                    <p style="color: #4a5568; line-height: 1.8;">
-                        For each main cluster, sub-clustering is performed independently using K-means on the embedding vectors
-                        of users within that cluster. The optimal number of sub-clusters (typically 2-4) is determined using
-                        silhouette score analysis. Sub-clusters are automatically named based on their transaction completion
-                        rates, helping identify high-value segments and conversion opportunities.
+                        The optimal number of clusters is automatically determined using the silhouette score.
+                        Cluster labels are automatically generated using AI based on business characteristics including
+                        conversion rate, engagement level, intent type, exploration depth, and activation speed.
                     </p>
                 </div>
             </div>
@@ -2615,7 +3378,7 @@ Return only the insights as a list, one per line, without numbering or markdown.
             return None
         
         # Merge clustering results with original data
-        user_cluster_map = self.embeddings_df[['user_uuid', 'cluster', 'cluster_label', 'sub_cluster', 'sub_cluster_label']].copy()
+        user_cluster_map = self.embeddings_df[['user_uuid', 'cluster', 'cluster_label']].copy()
         
         # Get user actions from original data
         user_actions = []
@@ -2628,17 +3391,14 @@ Return only the insights as a list, one per line, without numbering or markdown.
             if len(cluster_info) > 0:
                 cluster_id = cluster_info['cluster'].iloc[0]
                 cluster_label = cluster_info['cluster_label'].iloc[0]
-                sub_cluster = cluster_info['sub_cluster'].iloc[0] if 'sub_cluster' in cluster_info.columns else None
-                sub_cluster_label = cluster_info['sub_cluster_label'].iloc[0] if 'sub_cluster_label' in cluster_info.columns else None
             else:
                 cluster_id = None
                 cluster_label = "未分类"
-                sub_cluster = None
-                sub_cluster_label = None
             
             # Get unique actions
-            unique_actions = user_data['event_name'].unique().tolist()
-            action_counts = user_data['event_name'].value_counts().to_dict()
+            events = self._extract_events_from_user_data(user_data)
+            unique_actions = list(set(events))
+            action_counts = {event: events.count(event) for event in unique_actions}
             
             # Get transaction status
             has_transaction = pd.notna(user_data['fir_trx_time'].iloc[0]) if 'fir_trx_time' in user_data.columns else False
@@ -2647,14 +3407,12 @@ Return only the insights as a list, one per line, without numbering or markdown.
                 'user_uuid': user_id,
                 'cluster_id': int(cluster_id) if cluster_id is not None else None,
                 'cluster_label': cluster_label,
-                'sub_cluster_id': int(sub_cluster) if sub_cluster is not None else None,
-                'sub_cluster_label': sub_cluster_label,
                 'total_actions': len(user_data),
                 'unique_actions': unique_actions,
                 'action_counts': action_counts,
                 'has_transaction': bool(has_transaction),
-                'first_action': user_data['event_name'].iloc[0] if len(user_data) > 0 else None,
-                'last_action': user_data['event_name'].iloc[-1] if len(user_data) > 0 else None
+                'first_action': events[0] if len(events) > 0 else None,
+                'last_action': events[-1] if len(events) > 0 else None
             })
         
         return user_actions
@@ -2811,15 +3569,6 @@ Return only the insights as a list, one per line, without numbering or markdown.
             background: #bee3f8;
             color: #2c5282;
         }}
-        .sub-cluster-badge {{
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 8px;
-            font-size: 0.75em;
-            margin-left: 5px;
-            background: #e2e8f0;
-            color: #4a5568;
-        }}
         .action-tags {{
             display: flex;
             flex-wrap: wrap;
@@ -2918,8 +3667,7 @@ Return only the insights as a list, one per line, without numbering or markdown.
                 <thead>
                     <tr>
                         <th>用户ID</th>
-                        <th>主聚类</th>
-                        <th>子聚类</th>
+                        <th>聚类</th>
                         <th>交易状态</th>
                         <th>动作总数</th>
                         <th>唯一动作</th>
@@ -3027,23 +3775,8 @@ Return only the insights as a list, one per line, without numbering or markdown.
                     badge.textContent = `${{user.cluster_label}}`;
                     clusterCell.appendChild(badge);
                     
-                    if (user.sub_cluster_label) {{
-                        const subBadge = document.createElement('span');
-                        subBadge.className = 'sub-cluster-badge';
-                        subBadge.textContent = user.sub_cluster_label;
-                        clusterCell.appendChild(subBadge);
-                    }}
                 }} else {{
                     clusterCell.textContent = '未分类';
-                }}
-                
-                // Sub-cluster
-                const subClusterCell = document.createElement('td');
-                if (user.sub_cluster_label) {{
-                    subClusterCell.textContent = user.sub_cluster_label;
-                }} else {{
-                    subClusterCell.textContent = '-';
-                    subClusterCell.style.color = '#a0aec0';
                 }}
                 
                 // Transaction status
@@ -3170,24 +3903,30 @@ def main():
     print("   Using: Google Gemini Embedding + K-means Clustering")
     print("   No manual feature engineering\n")
     
-    # Get API key
-    gemini_api_key = os.getenv('GEMINI_API_KEY')
+    # Get API key from environment variable (must be set via export command)
+    # Check both uppercase and lowercase versions
+    gemini_api_key = os.getenv('GEMINI_API_KEY') or os.getenv('gemini_api_key')
     if not gemini_api_key:
         print("❌ Error: GEMINI_API_KEY environment variable not set")
         print("   Please set it with: export GEMINI_API_KEY='your-api-key'")
+        print("   Or: export gemini_api_key='your-api-key'")
         return None
     
-    # Initialize analyzer
-    data_path = 'data.csv'
+    # Verify API key is being used (show first few chars for debugging)
+    print(f"   🔑 Found API key in environment variable (starts with: {gemini_api_key[:10]}...)")
+    
+    # Initialize analyzer - pass None to force use of environment variable
+    data_path = 'data.json'
     try:
-        analyzer = UserIntentAnalyzer(data_path, gemini_api_key=gemini_api_key)
+        # Pass None to force __init__ to use environment variable
+        analyzer = UserIntentAnalyzer(data_path, gemini_api_key=None)
     except Exception as e:
         print(f"❌ Error initializing analyzer: {e}")
         return None
     
     # Extract embeddings
     print("\n📊 Extracting embeddings using Gemini...")
-    embeddings_df = analyzer.extract_embeddings()
+    embeddings_df = analyzer.extract_embeddings(force_regenerate=False)
     print(f"✅ Successfully extracted embeddings for {len(embeddings_df)} users\n")
     
     # Perform clustering
@@ -3220,68 +3959,42 @@ def main():
     
     print(f"✅ Main report saved to: {output_path} and {report_path}")
     
-    # Generate user path pages for ALL users in each sub-cluster
+    # Generate user path pages for ALL users
     print("\n📊 Generating user behavior path pages for all users...")
     total_users = len(analyzer.embeddings_df)
     users_generated = 0
     users_failed = 0
     
-    # Group by cluster and sub-cluster
-    if 'sub_cluster' in analyzer.embeddings_df.columns:
-        for cluster_id in sorted(analyzer.embeddings_df['cluster'].unique()):
-            cluster_data = analyzer.embeddings_df[analyzer.embeddings_df['cluster'] == cluster_id]
-            cluster_name = cluster_data['cluster_label'].iloc[0]
-            
-            for sub_cluster_id in sorted(cluster_data['sub_cluster'].unique()):
-                sub_cluster_data = cluster_data[cluster_data['sub_cluster'] == sub_cluster_id]
-                sub_cluster_users = sub_cluster_data['user_uuid'].unique()
-                
-                if sub_cluster_id >= 0:
-                    sub_cluster_label = sub_cluster_data['sub_cluster_label'].iloc[0] if 'sub_cluster_label' in sub_cluster_data.columns else f"Sub-cluster {sub_cluster_id}"
-                    print(f"   Generating paths for Cluster {cluster_id} ({cluster_name}) - {sub_cluster_label}: {len(sub_cluster_users)} users")
-                else:
-                    print(f"   Generating paths for Cluster {cluster_id} ({cluster_name}) - No sub-cluster: {len(sub_cluster_users)} users")
-                
-                for idx, user_id in enumerate(sub_cluster_users, 1):
-                    try:
-                        user_path_html = analyzer.generate_user_path_page(user_id)
-                        if user_path_html:
-                            # Sanitize user_id for filename (same as JavaScript)
-                            safe_user_id = ''.join(c if c.isalnum() or c in '._-' else '_' for c in user_id)
-                            user_path_filename = f"user_path_{safe_user_id}.html"
-                            
-                            with open(user_path_filename, 'w', encoding='utf-8') as f:
-                                f.write(user_path_html)
-                            users_generated += 1
-                            
-                            # Progress indicator every 50 users
-                            if users_generated % 50 == 0:
-                                print(f"      Progress: {users_generated}/{total_users} users generated...")
-                    except Exception as e:
-                        users_failed += 1
-                        if users_failed <= 5:  # Only print first 5 errors
-                            print(f"      ⚠️  Error generating path for user {user_id[:20]}...: {e}")
-                        continue
-    else:
-        # Fallback if no sub-cluster column
-        print("   ⚠️  No sub-cluster information found, generating for all users by cluster")
-        for cluster_id in sorted(analyzer.embeddings_df['cluster'].unique()):
-            cluster_data = analyzer.embeddings_df[analyzer.embeddings_df['cluster'] == cluster_id]
-            cluster_users = cluster_data['user_uuid'].unique()
-            
-            for user_id in cluster_users:
-                try:
-                    user_path_html = analyzer.generate_user_path_page(user_id)
-                    if user_path_html:
-                        safe_user_id = ''.join(c if c.isalnum() or c in '._-' else '_' for c in user_id)
-                        user_path_filename = f"user_path_{safe_user_id}.html"
-                        
-                        with open(user_path_filename, 'w', encoding='utf-8') as f:
-                            f.write(user_path_html)
-                        users_generated += 1
-                except Exception as e:
-                    users_failed += 1
-                    continue
+    # Group by cluster
+    for cluster_id in sorted(analyzer.embeddings_df['cluster'].unique()):
+        cluster_data = analyzer.embeddings_df[analyzer.embeddings_df['cluster'] == cluster_id]
+        cluster_name = cluster_data['cluster_label'].iloc[0]
+        cluster_users = cluster_data['user_uuid'].unique()
+        
+        print(f"   Generating paths for Cluster {cluster_id} ({cluster_name}): {len(cluster_users)} users")
+        
+        for idx, user_id in enumerate(cluster_users, 1):
+            try:
+                user_path_html = analyzer.generate_user_path_page(user_id)
+                if user_path_html:
+                    # Sanitize user_id for filename (same as JavaScript)
+                    safe_user_id = ''.join(c if c.isalnum() or c in '._-' else '_' for c in user_id)
+                    # Create user_paths directory if it doesn't exist
+                    os.makedirs('user_paths', exist_ok=True)
+                    user_path_filename = f"user_paths/user_path_{safe_user_id}.html"
+                    
+                    with open(user_path_filename, 'w', encoding='utf-8') as f:
+                        f.write(user_path_html)
+                    users_generated += 1
+                    
+                    # Progress indicator every 50 users
+                    if users_generated % 50 == 0:
+                        print(f"      Progress: {users_generated}/{total_users} users generated...")
+            except Exception as e:
+                users_failed += 1
+                if users_failed <= 5:  # Only print first 5 errors
+                    print(f"      ⚠️  Error generating path for user {user_id[:20]}...: {e}")
+                continue
     
     print(f"✅ Generated {users_generated} user behavior path pages")
     if users_failed > 0:

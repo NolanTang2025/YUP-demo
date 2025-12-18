@@ -1,0 +1,21 @@
+聚类数量说明：
+
+算法已经自动测试了 2-10 个聚类，结果如下：
+- k=2: silhouette_score=0.290 ⭐ (最优，自动选择)
+- k=3: silhouette_score=0.177
+- k=4: silhouette_score=0.172
+- k=5: silhouette_score=0.189
+- k=6-10: 0.15-0.17
+
+为什么选择 2 个聚类？
+- Silhouette Score (轮廓系数) 是衡量聚类质量的标准
+- 分数范围：-1 到 1，越高越好
+- k=2 的分数 (0.290) 明显高于其他选项
+
+如何强制使用更多聚类？
+在 user_intent_clustering.py 的第 1695 行，修改：
+  DESIRED_CLUSTERS = None  # 改为 DESIRED_CLUSTERS = 3 或 4 或 5 等
+
+例如：
+  DESIRED_CLUSTERS = 3  # 强制使用 3 个聚类
+  DESIRED_CLUSTERS = 4  # 强制使用 4 个聚类
